@@ -2,7 +2,7 @@
 
 Accurate completion, input-needed, and error notifications for [Claude Code](https://claude.com/claude-code) — starts with Telegram, built to support more channels.
 
-> **Status: pre-implementation.** The design below is finalized (see [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md)); the code has not been written yet. This README describes the tool as designed, not as currently installable.
+See [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md) for the full design and rationale.
 
 ## Why
 
@@ -18,18 +18,20 @@ Claude Code runs long, multi-step turns and exposes `Stop`, `StopFailure`, and `
 - Ships fixes and improvements as new versions — `install latest` upgrades notification accuracy.
 - Keeps secrets out of `settings.json` entirely.
 
-## How completion detection works
+## Installation
 
-At `Stop` time, the tool answers: *are there background tasks this session launched that haven't finished?*
-
-A background dispatch — `Agent` (background by default), or `Bash` with `run_in_background=true` — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution. If any dispatch is still unresolved, the hook stays silent; only once everything has resolved does it check a rate limit and send.
-
-Transcripts are parsed incrementally (cached byte offset per session) and at the JSON envelope level — never by substring-matching text, so debug output that happens to contain the words "tool_use_id" can't produce a false signal.
-
-## Installation (once released)
+One command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jeromefromcn/claude-code-notify/main/install.sh | bash
+```
+
+Or clone and run locally:
+
+```bash
+git clone https://github.com/Jeromefromcn/claude-code-notify.git
+cd claude-code-notify
+./install.sh
 ```
 
 The installer verifies `python3` is present, downloads the pinned latest release into `~/.claude/claude-code-notify/`, prompts once for your Telegram bot token and chat id (skipped on upgrade — your existing config is kept), and merges its own hook entries into `settings.json` without touching anything else you've configured.
@@ -57,7 +59,21 @@ TELEGRAM_API_BASE=https://api.telegram.org
 NOTIFY_DEBUG=false
 ```
 
-## Architecture
+## Uninstall
+
+```bash
+./install.sh --uninstall
+```
+
+(or re-run the one-command installer with the same flag if you no longer have a local clone). This removes the tool's tagged hook entries from `settings.json` and the installed code under `~/.claude/claude-code-notify/`, prompting before it also deletes `config.env` (so you can keep your bot token if you plan to reinstall).
+
+## How it works
+
+At `Stop` time, the tool answers: *are there background tasks this session launched that haven't finished?*
+
+A background dispatch — `Agent` (background by default), or `Bash` with `run_in_background=true` — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. If any dispatch is still unresolved, the hook stays silent; only once everything has resolved does it check a rate limit and send.
+
+Transcripts are parsed incrementally (cached byte offset per session) and at the JSON envelope level — never by substring-matching text, so debug output that happens to contain the words "tool_use_id" can't produce a false signal.
 
 ```
 Claude Code turn ends
@@ -98,7 +114,11 @@ See [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md) for the
 
 ## Related work
 
-Several existing tools notify from Claude Code hooks — [starpipi/claude-code-notify](https://github.com/starpipi/claude-code-notify), [777genius/claude-notifications-go](https://github.com/777genius/claude-notifications-go), [decko/claude-code-notify](https://github.com/decko/claude-code-notify), among others. All of them fire on the `Stop`/`Notification` hook directly, without tracking whether a background `Agent` or background `Bash` dispatch is still running — none of them solve the false-positive this project targets (§3 of the design doc). Reviewing their source also surfaced two corrections folded into this design: Claude Code hook input arrives as JSON on stdin, not env vars, and the native `SubagentStop` hook is unreliable for background agents ([anthropics/claude-code#25147](https://github.com/anthropics/claude-code/issues/25147)) — both documented in the design doc.
+This project generalizes a personal `Stop`/`StopFailure`/`PermissionRequest` hook setup that lived as an inline shell snippet in one developer's own `~/.claude/settings.json` — untested, unversioned, and un-shareable. That setup's transcript-parsing approach is the starting point for `pending_tracker.py`/`transcript_parser.py` here, but it had a correctness bug this project fixes: it resolved a background dispatch on *any* matching `tool_use_id`, including a background `Bash` command's immediate "running in background" ack, so it could announce "finished" while the command was still running (see "How it works" above, and design doc §3).
+
+Several other existing tools notify from Claude Code hooks — [starpipi/claude-code-notify](https://github.com/starpipi/claude-code-notify), [777genius/claude-notifications-go](https://github.com/777genius/claude-notifications-go), [decko/claude-code-notify](https://github.com/decko/claude-code-notify), among others. All of them fire on the `Stop`/`Notification` hook directly, without tracking whether a background `Agent` or background `Bash` dispatch is still running — none of them solve the false-positive this project targets (design doc §3). Reviewing their source also confirmed that Claude Code hook input arrives as JSON on stdin, not env vars.
+
+The decision to use transcript-based `<task-notification>`/`tool_use_id` matching instead of the native `SubagentStop` hook is backed by several open upstream issues showing `SubagentStop` is unreliable for this case: background agents (`run_in_background=true`) bypass `Stop`/`SubagentStop` entirely ([anthropics/claude-code#25147](https://github.com/anthropics/claude-code/issues/25147)), subagent completion isn't reliably reported ([anthropics/claude-code#33049](https://github.com/anthropics/claude-code/issues/33049)), and even when `SubagentStop` does fire it carries the parent's shared `session_id` with no per-subagent identifier ([anthropics/claude-code#7881](https://github.com/anthropics/claude-code/issues/7881)). See design doc §4.3 for the full context.
 
 ## License
 
