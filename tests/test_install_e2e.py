@@ -163,3 +163,17 @@ def test_install_migrates_legacy_entries_without_state_file(tmp_path):
         assert len(data["hooks"][event]) == 1  # adopted, not duplicated
     state_file = settings.parent / ".claude-code-notify-hooks.json"
     assert state_file.exists()  # migration produced a state file going forward
+
+
+def test_install_with_corrupt_settings_fails_cleanly(tmp_path):
+    # Regression test for todo.md issue 13: a hand-corrupted settings.json
+    # must abort install.sh with a clean message via installer.py's own
+    # exit code, not a raw Python traceback — and must be left untouched
+    # so the user can fix or inspect it.
+    settings = tmp_path / "settings.json"
+    settings.write_text("not json{")
+    result, base, settings = _run(tmp_path, "--non-interactive", settings=settings)
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+    assert settings.read_text() == "not json{"

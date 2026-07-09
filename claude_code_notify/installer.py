@@ -100,13 +100,29 @@ def remove_hooks(settings, state):
     return settings
 
 
+class InstallerError(Exception):
+    pass
+
+
 def _load(path):
-    if os.path.exists(path):
+    if not os.path.exists(path):
+        return {}
+    try:
         with open(path) as fh:
             text = fh.read().strip()
-        if text:
-            return json.loads(text)
-    return {}
+    except OSError as exc:
+        raise InstallerError(f"cannot read {path}: {exc}") from None
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InstallerError(f"{path} is not valid JSON: {exc}") from None
+    if not isinstance(data, dict):
+        raise InstallerError(
+            f"{path} must contain a JSON object, found {type(data).__name__}"
+        )
+    return data
 
 
 def _save(path, data):
@@ -119,23 +135,27 @@ def _save(path, data):
 
 
 def main(argv):
-    if len(argv) >= 3 and argv[0] == "merge":
-        settings_path, base_dir = argv[1], argv[2]
-        st_path = state_path_for(settings_path)
-        settings, state = merge_hooks(_load(settings_path), base_dir, load_state(st_path))
-        _save(settings_path, settings)
-        save_state(st_path, state)
-        return 0
-    if len(argv) >= 2 and argv[0] == "remove":
-        settings_path = argv[1]
-        st_path = state_path_for(settings_path)
-        settings = remove_hooks(_load(settings_path), load_state(st_path))
-        _save(settings_path, settings)
-        if os.path.exists(st_path):
-            os.remove(st_path)
-        return 0
-    sys.stderr.write("usage: installer.py merge <settings> <base_dir> | remove <settings>\n")
-    return 2
+    try:
+        if len(argv) >= 3 and argv[0] == "merge":
+            settings_path, base_dir = argv[1], argv[2]
+            st_path = state_path_for(settings_path)
+            settings, state = merge_hooks(_load(settings_path), base_dir, load_state(st_path))
+            _save(settings_path, settings)
+            save_state(st_path, state)
+            return 0
+        if len(argv) >= 2 and argv[0] == "remove":
+            settings_path = argv[1]
+            st_path = state_path_for(settings_path)
+            settings = remove_hooks(_load(settings_path), load_state(st_path))
+            _save(settings_path, settings)
+            if os.path.exists(st_path):
+                os.remove(st_path)
+            return 0
+        sys.stderr.write("usage: installer.py merge <settings> <base_dir> | remove <settings>\n")
+        return 2
+    except InstallerError as exc:
+        sys.stderr.write(f"claude-code-notify: {exc}\n")
+        return 1
 
 
 if __name__ == "__main__":

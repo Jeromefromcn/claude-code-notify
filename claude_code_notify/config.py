@@ -49,6 +49,12 @@ def parse_env_file(text):
     out = {}
     for line in text.splitlines():
         line = line.strip()
+        if line.startswith("export "):
+            # Support `export KEY=value` for users who hand-edit config.env.
+            # This is a plain line parser, not a shell — only a single
+            # `export KEY=value` per line is supported (not e.g. bash's
+            # `export A=1 B=2`, variable expansion, or command substitution).
+            line = line[len("export "):].strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")

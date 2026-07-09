@@ -14,6 +14,41 @@ def test_parse_env_file_strips_quotes():
     assert cfg.parse_env_file("K='v'\n") == {"K": "v"}
 
 
+def test_parse_env_file_strips_export_prefix():
+    assert cfg.parse_env_file("export FOO=bar\n") == {"FOO": "bar"}
+
+
+def test_parse_env_file_export_with_extra_spaces():
+    assert cfg.parse_env_file("export   FOO=bar\n") == {"FOO": "bar"}
+
+
+def test_parse_env_file_export_with_quoted_value():
+    assert cfg.parse_env_file('export FOO="bar baz"\n') == {"FOO": "bar baz"}
+
+
+def test_parse_env_file_export_mixed_with_plain_lines():
+    text = "export TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    assert cfg.parse_env_file(text) == {
+        "TELEGRAM_BOT_TOKEN": "123:abc",
+        "TELEGRAM_CHAT_ID": "999",
+    }
+
+
+def test_parse_env_file_does_not_mistake_export_like_key_for_prefix():
+    # A real key that merely starts with the substring "export" (no space
+    # after it) must be parsed as-is, not have its start chopped off.
+    assert cfg.parse_env_file("exported_flag=1\n") == {"exported_flag": "1"}
+
+
+def test_parse_env_file_export_multi_assignment_line_not_supported():
+    # Bash allows `export A=1 B=2` on one line; parse_env_file is a
+    # deliberately simple line parser (not a shell parser) and only
+    # supports one `export KEY=value` per line. This documents that
+    # known, intentional boundary rather than silently doing the wrong
+    # thing unnoticed.
+    assert cfg.parse_env_file("export A=1 B=2\n") == {"A": "1 B=2"}
+
+
 def test_load_from_file(tmp_path):
     base = tmp_path
     (base / "config.env").write_text(
@@ -26,6 +61,15 @@ def test_load_from_file(tmp_path):
     assert c.api_base == "https://api.telegram.org"
     assert c.debug is False
     assert c.base_dir == base
+
+
+def test_load_from_file_with_export_prefix(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "export TELEGRAM_BOT_TOKEN=123:abc\nexport TELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.bot_token == "123:abc"
+    assert c.chat_id == "999"
 
 
 def test_env_overrides_file(tmp_path):

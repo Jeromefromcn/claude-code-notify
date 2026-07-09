@@ -213,3 +213,55 @@ def test_remove_matches_multi_hook_entry_by_recorded_command():
     ]
     removed = installer.remove_hooks(merged, state)
     assert removed.get("hooks", {}) == {}
+
+
+def test_main_merge_with_invalid_json_settings_returns_clean_error(tmp_path, capsys):
+    # Regression test for todo.md issue 13: a hand-corrupted settings.json
+    # must fail with a clean one-line message, not a raw Python traceback,
+    # and must never be overwritten.
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("not json{")
+    rc = installer.main(["merge", str(settings_file), "/base/claude-code-notify"])
+    assert rc == 1
+    assert settings_file.read_text() == "not json{"
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err
+    assert "Traceback" not in err
+
+
+def test_main_remove_with_invalid_json_settings_returns_clean_error(tmp_path, capsys):
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("not json{")
+    rc = installer.main(["remove", str(settings_file)])
+    assert rc == 1
+    assert settings_file.read_text() == "not json{"
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err
+    assert "Traceback" not in err
+
+
+def test_main_merge_with_non_dict_json_settings_returns_clean_error(tmp_path, capsys):
+    # Legal JSON but wrong shape (e.g. a list) must not reach `.get("hooks")`
+    # and blow up with an AttributeError — same class of bug as issue 1.
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("[1, 2, 3]")
+    rc = installer.main(["merge", str(settings_file), "/base/claude-code-notify"])
+    assert rc == 1
+    assert settings_file.read_text() == "[1, 2, 3]"
+    err = capsys.readouterr().err
+    assert "JSON object" in err
+    assert "Traceback" not in err
+
+
+def test_main_merge_with_unreadable_settings_returns_clean_error(tmp_path, capsys):
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
+    settings_file.chmod(0o000)
+    try:
+        rc = installer.main(["merge", str(settings_file), "/base/claude-code-notify"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "cannot read" in err
+        assert "Traceback" not in err
+    finally:
+        settings_file.chmod(0o644)  # restore so tmp_path cleanup can remove it
