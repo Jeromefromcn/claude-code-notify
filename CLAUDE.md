@@ -20,6 +20,7 @@ Standalone, versioned tool that sends Telegram notifications from Claude Code ho
 - **Core must be testable without a live Claude Code session and without hitting real Telegram.**
 - **Credit any external project or reference consulted in README.md's "Related work" section.** No uncredited borrowing of code or ideas.
 - v1 is Telegram-only, global-install-only (`~/.claude/`). Don't add other channels or project-level install without checking the roadmap (doc §11).
+- **All files pushed to remote (code, docs, commit messages, PRs) must be written in English.**
 
 ## Editing this file
 
