@@ -2,10 +2,6 @@
 
 Standalone, versioned tool that sends Telegram notifications from Claude Code hooks: turn finished, blocked on input, or errored. Full spec: [docs/claude-notify-product-doc.md](docs/claude-notify-product-doc.md).
 
-## Status
-
-Pre-implementation. Design is final; no code yet (see doc §12 Decisions).
-
 ## Working principles
 
 - Do the right thing, not the easy thing.
@@ -19,7 +15,7 @@ Pre-implementation. Design is final; no code yet (see doc §12 Decisions).
 - **hooks.py never raises or exits non-zero on internal errors** — catch, log if `NOTIFY_DEBUG` is on, no-op.
 - **Debug logging is off by default**, gated by `NOTIFY_DEBUG` in config.env; writes to `~/.claude/claude-code-notify/debug.log` (chmod 600, secrets scrubbed) only when enabled.
 - **Config lives in `~/.claude/claude-code-notify/config.env`** (`chmod 600`), never inlined into `settings.json`, never committed.
-- **Installer only merges/removes its own tagged hook entries** in `settings.json` via the `json` module — never `sed`/string surgery. Must be idempotent.
+- **Installer only merges/removes its own hook entries** in `settings.json` via the `json` module — never `sed`/string surgery. Tracked by exact command string in a sidecar state file (ADR 0001), not path/substring tagging; the latter only remains as a one-time legacy-upgrade fallback. Must be idempotent.
 - **Secrets are scrubbed** from any error/log output, including the debug log, before display or write.
 - **Core must be testable without a live Claude Code session and without hitting real Telegram.**
 - **Credit any external project or reference consulted in README.md's "Related work" section.** No uncredited borrowing of code or ideas.

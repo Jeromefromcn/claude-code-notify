@@ -162,7 +162,7 @@ Off by default (`NOTIFY_DEBUG=false`) — zero log writes, zero overhead. When s
 
 ### 5.4 Hook integration with settings.json
 
-The installer merges **only** `claude-code-notify`'s own hook entries into the `hooks` block of the target `settings.json`, using Python (`json` module) — never `sed`/string surgery. Entries are tagged (e.g. a stable command path under `~/.claude/claude-code-notify/`) so re-install replaces its own entries idempotently and leaves any other user hooks untouched. Uninstall removes exactly those entries.
+The installer merges **only** `claude-code-notify`'s own hook entries into the `hooks` block of the target `settings.json`, using Python (`json` module) — never `sed`/string surgery. Which entries are "ours" is tracked by a sidecar state file (`.claude-code-notify-hooks.json`, next to `settings.json`) recording the exact command string written last time, so re-install replaces its own entries idempotently and leaves any other user hooks untouched even if the install path (`base_dir`) changes between runs. A one-time legacy substring match (command path containing `claude-code-notify`) claims pre-existing entries from installs that predate this state file. Uninstall removes exactly those entries. See [ADR 0001](adr/0001-hook-installation-tracking.md).
 
 ## 6. Installation & upgrade
 
@@ -215,7 +215,7 @@ Design constraint: the core must be verifiable **without** Claude Code and **wit
 - **Secret scrubbing:** any error output from a failed Telegram call, and any line written to the optional debug log (§5.3.1), is scrubbed of the bot token before display or write (the token appears in the request URL).
 - **hooks.py must not crash the user's turn:** all entry points catch every exception, log it (if `NOTIFY_DEBUG=true`), and exit 0. A bug in this tool must never surface as a blocked or broken Claude Code turn.
 - **No secret echo:** interactive prompt for the token does not echo it to the terminal.
-- **Least surprise on merge:** installer only ever adds/removes its own tagged hook entries in settings.json.
+- **Least surprise on merge:** installer only ever adds/removes its own hook entries in settings.json, tracked via a sidecar state file rather than path/substring guessing (§5.4, ADR 0001).
 - **Supply-chain honesty:** `curl | bash` is convenient but opaque; README documents the exact steps the script performs and offers a `git clone && ./install.sh` path for users who want to read it first.
 
 ## 10. Repository layout

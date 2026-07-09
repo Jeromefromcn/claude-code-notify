@@ -39,7 +39,7 @@ The installer verifies `python3` is present, downloads the pinned latest release
 | Flag | Effect |
 |---|---|
 | `--version <tag>` | Install a specific release instead of latest. |
-| `--uninstall` | Remove hook entries and installed code (prompts before deleting `config.env`). |
+| `--uninstall` | Remove hook entries, installed code, state, and debug log. Always keeps `config.env` (prints its path for manual deletion) — no prompt. |
 | `--non-interactive` | Read `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` from env — for CI/automation. |
 
 Re-running the install command is the upgrade path: it overwrites code and leaves your config and other hooks untouched.
@@ -65,7 +65,7 @@ NOTIFY_DEBUG=false
 ./install.sh --uninstall
 ```
 
-(or re-run the one-command installer with the same flag if you no longer have a local clone). This removes the tool's tagged hook entries from `settings.json` and the installed code under `~/.claude/claude-code-notify/`, prompting before it also deletes `config.env` (so you can keep your bot token if you plan to reinstall).
+(or re-run the one-command installer with the same flag if you no longer have a local clone). This removes the tool's hook entries from `settings.json` and the installed code under `~/.claude/claude-code-notify/`. `config.env` is always kept (its path is printed for manual deletion) so you don't lose your bot token if you plan to reinstall — there's no prompt, so uninstall stays safe to run non-interactively (e.g. `curl | bash`).
 
 ## How it works
 
@@ -99,7 +99,7 @@ Notifications not firing as expected? Set `NOTIFY_DEBUG=true` in `config.env` (d
 - The bot token lives only in `config.env` (`chmod 600`) and is never written to `settings.json` or committed.
 - Any error output from a failed Telegram call is scrubbed of the token before being shown.
 - The interactive token prompt doesn't echo input.
-- The installer only ever adds or removes its own tagged entries in `settings.json`.
+- The installer only ever adds or removes its own entries in `settings.json`, tracked via a sidecar state file rather than path/substring guessing.
 
 ## Roadmap
 
