@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-Every task's requirements implicitly include this section. Values copied verbatim from `Doc/claude-notify-product-doc.md` and `CLAUDE.md`.
+Every task's requirements implicitly include this section. Values copied verbatim from `docs/claude-notify-product-doc.md` and `CLAUDE.md`.
 
 - **Runtime deps:** `python3` only. No pip-installable runtime dependencies. HTTP via `urllib` from the stdlib. (pytest is a test-only dep.)
 - **Completion rule:** a background dispatch (`Agent`, or `Bash` with `run_in_background=true`) is resolved **only** by a `<task-notification>` matching its `tool_use_id`. An immediate ack `tool_result` never resolves it. `PENDING = launched − resolved`; notify only when `PENDING == 0`.

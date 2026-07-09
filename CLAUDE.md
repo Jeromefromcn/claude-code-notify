@@ -1,6 +1,6 @@
 # claude-code-notify
 
-Standalone, versioned tool that sends Telegram notifications from Claude Code hooks: turn finished, blocked on input, or errored. Full spec: [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md).
+Standalone, versioned tool that sends Telegram notifications from Claude Code hooks: turn finished, blocked on input, or errored. Full spec: [docs/claude-notify-product-doc.md](docs/claude-notify-product-doc.md).
 
 ## Status
 
@@ -22,4 +22,4 @@ Pre-implementation. Design is final; no code yet (see doc §12 Decisions).
 
 ## Editing this file
 
-Keep it short and direct: one line per rule, no prose, no restating the product doc — link to it instead. If a rule needs more than 2 lines to explain, it belongs in `Doc/`, not here.
+Keep it short and direct: one line per rule, no prose, no restating the product doc — link to it instead. If a rule needs more than 2 lines to explain, it belongs in `docs/`, not here.

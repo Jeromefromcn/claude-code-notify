@@ -2,7 +2,7 @@
 
 Accurate completion, input-needed, and error notifications for [Claude Code](https://claude.com/claude-code) — starts with Telegram, built to support more channels.
 
-See [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md) for the full design and rationale.
+See [docs/claude-notify-product-doc.md](docs/claude-notify-product-doc.md) for the full design and rationale.
 
 ## Why
 
@@ -110,7 +110,7 @@ Out of scope for v1, planned for later:
 - Configurable message templates and localization.
 - Windows support.
 
-See [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md) for the full design, including test strategy and repository layout.
+See [docs/claude-notify-product-doc.md](docs/claude-notify-product-doc.md) for the full design, including test strategy and repository layout.
 
 ## Related work
 
