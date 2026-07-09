@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","id":"toolu_side1","name":"Bash","input":{"command":"sleep 5","run_in_background":true}}]}}

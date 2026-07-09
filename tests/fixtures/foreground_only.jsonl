@@ -1,0 +1,3 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_fg1","name":"Bash","input":{"command":"ls","run_in_background":false}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_fg1","content":"a\nb"}]}}
+{"type":"ai-title","aiTitle":"List files"}

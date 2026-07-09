@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_ag2","name":"Agent","input":{"description":"do work","model":"sonnet","prompt":"go"}}]}}
+{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>t1</task-id>\n<tool-use-id>toolu_ag2</tool-use-id>\n<status>completed</status>\n</task-notification>"}

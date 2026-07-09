@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_ag1","name":"Agent","input":{"description":"do work","model":"sonnet","prompt":"go"}}]}}
