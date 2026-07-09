@@ -92,7 +92,10 @@ def run(event, stdin_text):
 
 def main(argv):
     event = argv[1] if len(argv) > 1 else ""
-    stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
+    try:
+        stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
+    except Exception:
+        stdin_text = ""  # never let a stdin read failure escape uncaught
     return run(event, stdin_text)
 
 

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 
@@ -88,6 +89,30 @@ def test_run_never_raises_on_notifier_error(base, tmp_path, monkeypatch):
     transcript = _write_transcript(tmp_path, [])
     payload = {"session_id": "s5", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop_failure", json.dumps(payload)) == 0
+
+
+class _RaisingStdin:
+    def isatty(self):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def read(self):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+
+def test_main_never_raises_on_stdin_read_failure(base, monkeypatch):
+    monkeypatch.setattr(hooks.sys, "stdin", _RaisingStdin())
+    assert hooks.main(["hooks", "stop"]) == 0
+
+
+def test_main_happy_path_matches_run(base, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [])
+    payload = {"session_id": "s7", "transcript_path": transcript, "cwd": "/w"}
+    monkeypatch.setattr(hooks.sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert hooks.main(["hooks", "stop_failure"]) == 0
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code stopped with error |")
 
 
 def test_debug_log_written_and_scrubbed(tmp_path, monkeypatch):
