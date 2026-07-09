@@ -4,7 +4,6 @@
 # (json module), never sed/string surgery.
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/Jeromefromcn/claude-code-notify/main"
 REPO_TARBALL="https://github.com/Jeromefromcn/claude-code-notify/archive/refs"
 BASE_DIR="${CLAUDE_NOTIFY_HOME:-$HOME/.claude/claude-code-notify}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
