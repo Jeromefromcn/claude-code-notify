@@ -1,42 +1,42 @@
-# 0001. 用狀態檔取代路徑字串比對來辨識自己裝的 hook
+# 0001. Use a state file instead of path-string matching to identify our own hooks
 
-## 狀態
+## Status
 
-已接受
+Accepted
 
-## 背景
+## Context
 
-`installer.py` 把自己寫入 `settings.json` 的 hook 條目，跟使用者自己的其他 hook 條目分開管理，好讓 `merge`（安裝/升級）跟 `remove`（卸載）都只動自己的條目。
+`installer.py` manages the hook entries it writes into `settings.json` separately from the user's other hook entries, so that `merge` (install/upgrade) and `remove` (uninstall) only ever touch its own entries.
 
-v0.1.0 的判斷方式（`_is_ours`）是檢查 hook 的 `command` 字串裡有沒有包含 `"claude-code-notify"` 這個子字串。這在唯一文件化的預設安裝路徑（`~/.claude/claude-code-notify/`）下永遠成立，但有兩個結構性問題：
+The v0.1.0 approach (`_is_ours`) checks whether a hook's `command` string contains the substring `"claude-code-notify"`. This always holds under the only documented default install path (`~/.claude/claude-code-notify/`), but has two structural problems:
 
-1. **跟 `base_dir` 脫鉤**：只要安裝路徑（`CLAUDE_NOTIFY_HOME`，目前僅測試使用、未對外文件化）改變，新舊條目用的是完全不同的判斷邏輯依據（純粹字串巧合），重裝會產生重複 hook，卸載會留下清不掉的失效條目。這正是 [todo.md](../todo.md) 問題 7。
-2. **子字串比對本身不精確**：理論上任何使用者自訂的 hook，只要指令路徑剛好包含這個子字串（例如使用者自己的專案也叫這個名字），就會被誤判為「我們裝的」而被覆蓋或清除。
+1. **Decoupled from `base_dir`**: if the install path (`CLAUDE_NOTIFY_HOME`, currently test-only and not documented externally) changes, old and new entries are judged by completely different logic (a pure string coincidence) — reinstalling produces duplicate hooks, and uninstalling leaves stale entries that can't be cleaned up. This is exactly [todo.md](../todo.md) issue 7.
+2. **The substring match itself is imprecise**: in principle, any user-defined hook whose command path happens to contain this substring (e.g. the user's own project happens to share this name) would be misidentified as "ours" and get overwritten or removed.
 
-單純把判斷邏輯從「子字串包含」改成「命令路徑是否以目前的 `base_dir` 為前綴」，可以讓判斷更精確，但沒有解決第 1 點：如果兩次呼叫（例如先裝在路徑 A，之後改用路徑 B 重裝或卸載）用的 `base_dir` 不同，新的呼叫依然無從得知路徑 A 底下的舊條目是自己裝的。
+Simply changing the logic from "substring contains" to "command path is prefixed by the current `base_dir`" would make the match more precise, but doesn't solve point 1: if two calls (e.g. first installed at path A, then reinstalled or uninstalled using path B) use different `base_dir` values, the new call still has no way of knowing that the old entry under path A was one we installed.
 
-## 決策
+## Decision
 
-`installer.py` 改用一個獨立的狀態檔記錄「上一次實際寫入 `settings.json` 的完整 hook 指令字串」，取代任何依賴路徑內容的猜測：
+`installer.py` now uses a separate state file that records "the exact hook command string actually written to `settings.json` last time," replacing any guesswork based on path content:
 
-- 狀態檔命名為 `.claude-code-notify-hooks.json`，**與 `settings.json` 放在同一個目錄**（而不是放在 `base_dir` 底下）。原因：`base_dir`（`CLAUDE_NOTIFY_HOME`）在使用情境上被允許改變（這正是問題 7 的觸發條件），但 `settings.json` 的路徑（`CLAUDE_SETTINGS`）對真實使用者而言幾乎恆定不變，也是測試沙箱化時本來就會跟 `base_dir` 一起被覆寫的參照點（見 `tests/test_install_e2e.py` 的 `_run` helper）。把狀態檔綁在 `settings.json` 旁邊，才能讓它在 `base_dir` 改變後依然被找到。
-- `merge_hooks(settings, base_dir, state)` 用狀態檔裡記錄的「上次寫入的確切指令字串」去比對、移除 `settings.json` 裡的舊條目（而不是猜路徑），再寫入指向目前 `base_dir` 的新條目，並回傳更新後的狀態。
-- `remove_hooks(settings, state)` 同樣用狀態檔裡記錄的確切指令字串移除對應條目，呼叫端在成功後刪除狀態檔。
-- **舊版遷移**：如果某個事件在狀態檔裡沒有記錄（例如使用者從 v0.1.0 舊版升級，尚未產生過狀態檔），才退回使用舊版的子字串比對法，一次性「認領」既有條目，避免升級後產生重複 hook。這個退回路徑只在缺乏狀態記錄時觸發，之後的每次呼叫都會有精確紀錄可用。
+- The state file is named `.claude-code-notify-hooks.json` and **lives in the same directory as `settings.json`** (rather than under `base_dir`). Reason: `base_dir` (`CLAUDE_NOTIFY_HOME`) is allowed to change across use cases (this is exactly what triggers issue 7), but the path to `settings.json` (`CLAUDE_SETTINGS`) is effectively constant for real users, and is also the reference point that test sandboxing already overrides together with `base_dir` (see the `_run` helper in `tests/test_install_e2e.py`). Tying the state file to `settings.json` ensures it can still be found after `base_dir` changes.
+- `merge_hooks(settings, base_dir, state)` uses the "exact command string written last time" recorded in the state file to match and remove the old entry in `settings.json` (instead of guessing the path), then writes a new entry pointing at the current `base_dir`, and returns the updated state.
+- `remove_hooks(settings, state)` likewise uses the exact command string recorded in the state file to remove the corresponding entry; the caller deletes the state file after success.
+- **Legacy migration**: if a given event has no record in the state file (e.g. a user upgrading from the old v0.1.0, which never produced a state file), it falls back to the legacy substring-matching method, one-time "claiming" the existing entry to avoid producing a duplicate hook after upgrade. This fallback path only triggers when there's no state record; every call after that has an exact record to use.
 
-## 後果
+## Consequences
 
-**正面：**
-- 重裝、卸載都不再依賴目前呼叫時的 `base_dir` 剛好跟過去一致；只要 `settings.json` 本身沒變，安裝路徑無論怎麼改，狀態都追蹤得到。
-- 不再有「使用者自己的 hook 剛好命令路徑含有這個子字串」而被誤判的風險（比對改成精確字串相等）。
-- 對現有（v0.1.0）安裝的使用者透明：第一次升級時自動遷移，不需要使用者手動介入。
+**Positive:**
+- Reinstalling and uninstalling no longer depend on the current call's `base_dir` happening to match the past; as long as `settings.json` itself hasn't moved, state stays trackable no matter how the install path changes.
+- No more risk of a user's own hook being misidentified just because its command path happens to contain the substring (matching is now exact string equality).
+- Transparent for existing (v0.1.0) installs: migration happens automatically on first upgrade, with no manual user intervention needed.
 
-**代價：**
-- 在 `~/.claude/`（跟 `settings.json` 同一層目錄，而非本工具專屬的 `~/.claude/claude-code-notify/`）多放了一個小檔案。這跟「設定檔案集中在自己的目錄」的既有慣例（見 [產品文件](../claude-notify-product-doc.md) §5.3）有一點點出入，但這個狀態檔不含任何機密資訊，且卸載時會一併清除。
-- `installer.py` 的 `merge_hooks`/`remove_hooks` 函式簽章改變（多了 `state` 參數、`merge_hooks` 回傳值變成 tuple），屬於內部 API，呼叫端（`main()`）已同步更新，對 `install.sh` 的外部呼叫介面（CLI 參數）無影響。
-- 仍然只保護「`settings.json` 路徑不變、`base_dir` 改變」的情境。如果使用者連 `CLAUDE_SETTINGS` 也改了且沒有搬移狀態檔，一樣會失去追蹤——但這已經超出 v1「global-install-only」的文件化使用情境。
+**Costs:**
+- Adds one small file under `~/.claude/` (the same directory as `settings.json`, rather than this tool's own `~/.claude/claude-code-notify/`). This deviates slightly from the existing convention of "keep config files under our own directory" (see the [product doc](../claude-notify-product-doc.md) §5.3), but this state file contains no sensitive information and is removed on uninstall.
+- The function signatures of `merge_hooks`/`remove_hooks` in `installer.py` change (an added `state` parameter, and `merge_hooks`'s return value becomes a tuple); this is an internal API, and the caller (`main()`) has been updated accordingly, with no impact on `install.sh`'s external calling interface (CLI arguments).
+- Still only protects the scenario "`settings.json` path unchanged, `base_dir` changed." If a user also changes `CLAUDE_SETTINGS` without moving the state file, tracking is lost the same way — but that's already outside v1's documented "global-install-only" use case.
 
-## 相關
+## Related
 
-- [todo.md](../todo.md) 問題 7
-- [claude-notify-product-doc.md](../claude-notify-product-doc.md) §5.4（hook 整合設計）
+- [todo.md](../todo.md) issue 7
+- [claude-notify-product-doc.md](../claude-notify-product-doc.md) §5.4 (hook integration design)
