@@ -6,6 +6,11 @@ Standalone, versioned tool that sends Telegram notifications from Claude Code ho
 
 Pre-implementation. Design is final; no code yet (see doc §12 Decisions).
 
+## Working principles
+
+- Do the right thing, not the easy thing.
+- If any existing rule here seems wrong, ask immediately — don't blindly follow it.
+
 ## Core rules
 
 - **Completion detection**: a background dispatch (`Agent`, or `Bash` with `run_in_background=true`) is resolved **only** by a `<task-notification>` matching its `tool_use_id`. An immediate ack `tool_result` never resolves it. `PENDING = launched − resolved`; notify only when `PENDING == 0`.
