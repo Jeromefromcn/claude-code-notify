@@ -10,13 +10,14 @@ BASE_DIR="${CLAUDE_NOTIFY_HOME:-$HOME/.claude/claude-code-notify}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 MODE="install"
 VERSION="main"
+VERSION_EXPLICIT="0"
 NONINTERACTIVE="0"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --uninstall) MODE="uninstall" ;;
     --non-interactive) NONINTERACTIVE="1" ;;
-    --version) shift; VERSION="$1" ;;
+    --version) shift; [ $# -gt 0 ] || { echo "--version requires an argument" >&2; exit 2; }; VERSION="$1"; VERSION_EXPLICIT="1" ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
@@ -26,8 +27,8 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; 
 
 if [ "$MODE" = "uninstall" ]; then
   python3 "$BASE_DIR/claude_code_notify/installer.py" remove "$SETTINGS"
-  rm -rf "$BASE_DIR/claude_code_notify" "$BASE_DIR/hooks"
-  echo "Removed hook entries and code. config.env kept at $BASE_DIR/config.env (delete manually if desired)."
+  rm -rf "$BASE_DIR/claude_code_notify" "$BASE_DIR/hooks" "$BASE_DIR/state" "$BASE_DIR/debug.log"
+  echo "Removed hook entries, code, state, and debug log. config.env kept at $BASE_DIR/config.env (delete manually if desired)."
   exit 0
 fi
 
@@ -39,6 +40,19 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -d "$SRC_DIR/claude_code_notify" ]; then
   cp -R "$SRC_DIR/claude_code_notify" "$SRC_DIR/hooks" "$BASE_DIR/"
 else
+  # Default (no --version given): resolve the latest published GitHub release
+  # tag so a plain install/upgrade tracks "latest release", not the moving
+  # tip of main. An explicit --version <tag> always wins and skips this.
+  if [ "$VERSION_EXPLICIT" = "0" ]; then
+    LATEST_TAG="$(curl -fsSL https://api.github.com/repos/Jeromefromcn/claude-code-notify/releases/latest 2>/dev/null \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)"
+    if [ -n "$LATEST_TAG" ]; then
+      VERSION="$LATEST_TAG"
+    fi
+    # else: no releases published yet — fall through to "main" as a
+    # reasonable bootstrap default.
+  fi
+
   TMP="$(mktemp -d)"
   curl -fsSL "$REPO_TARBALL/heads/$VERSION.tar.gz" -o "$TMP/pkg.tgz" \
     || curl -fsSL "$REPO_TARBALL/tags/$VERSION.tar.gz" -o "$TMP/pkg.tgz"
@@ -57,8 +71,16 @@ else
     : "${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN for --non-interactive}"
     : "${TELEGRAM_CHAT_ID:?set TELEGRAM_CHAT_ID for --non-interactive}"
   else
-    read -r -s -p "Telegram bot token: " TELEGRAM_BOT_TOKEN; echo
-    read -r -p "Telegram chat id: " TELEGRAM_CHAT_ID
+    # stdin (fd 0) may be a curl|bash pipe, not a terminal — read the
+    # prompts from the controlling tty explicitly so this works for
+    # `curl -fsSL ... | bash` and not just `git clone && ./install.sh`.
+    if [ ! -e /dev/tty ]; then
+      echo "No terminal available to prompt for Telegram credentials." >&2
+      echo "Re-run with --non-interactive and TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID set." >&2
+      exit 1
+    fi
+    read -r -s -p "Telegram bot token: " TELEGRAM_BOT_TOKEN </dev/tty; echo
+    read -r -p "Telegram chat id: " TELEGRAM_CHAT_ID </dev/tty
   fi
   umask 177
   cat > "$CONFIG" <<EOF

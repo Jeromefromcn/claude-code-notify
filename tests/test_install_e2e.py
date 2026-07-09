@@ -7,6 +7,10 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+pytestmark = pytest.mark.skipif(
+    subprocess.run(["which", "bash"]).returncode != 0, reason="bash required"
+)
+
 
 def _run(tmp_path, *args):
     # Use a base dir name that actually contains installer.py's
@@ -32,7 +36,6 @@ def _run(tmp_path, *args):
     return result, base, settings
 
 
-@pytest.mark.skipif(subprocess.run(["which", "bash"]).returncode != 0, reason="bash required")
 def test_install_places_files_and_merges(tmp_path):
     result, base, settings = _run(tmp_path, "--non-interactive")
     assert result.returncode == 0, result.stderr
