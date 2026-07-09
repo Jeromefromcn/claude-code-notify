@@ -21,7 +21,12 @@ def load_state(path):
             set(data.get("launched", [])),
             set(data.get("resolved", [])),
         )
-    except (FileNotFoundError, ValueError, TypeError, OSError):
+    except Exception:
+        # Best-effort loader: any missing/corrupt/wrong-shaped state file
+        # (FileNotFoundError, JSON decode errors, non-dict JSON causing
+        # AttributeError on .get(), etc.) must fall back to a fresh State()
+        # rather than raise, so a bad state file only forces a full rescan
+        # instead of silently skipping notification.
         return State()
 
 

@@ -80,3 +80,16 @@ def test_corrupt_state_falls_back(tmp_path):
     state_path.write_text("{not valid json")
     result = pt.compute_pending(os.path.join(FIX, "bg_agent_pending.jsonl"), str(state_path))
     assert result == 1
+
+
+def test_wrong_shape_state_falls_back(tmp_path):
+    # Syntactically valid JSON that isn't a dict (null, [], "x", 42) must
+    # not raise AttributeError from data.get(...) - it should fall back
+    # to a fresh State() just like missing/corrupt files do.
+    for bad_json in ("null", "[]", '"x"', "42"):
+        state_path = tmp_path / "wrong_shape.state.json"
+        state_path.write_text(bad_json)
+        state = pt.load_state(str(state_path))
+        assert state.offset == 0
+        assert state.launched == set()
+        assert state.resolved == set()
