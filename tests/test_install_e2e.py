@@ -12,16 +12,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(tmp_path, *args):
-    # Use a base dir name that actually contains installer.py's
-    # MANAGED_MARKER ("claude-code-notify"), matching the real default
-    # install path (~/.claude/claude-code-notify/). The marker-in-path
-    # tagging design only recognizes entries whose command path contains
-    # that substring, so an arbitrary tmp dir name (e.g. "ccn") would make
-    # every hook look "foreign" and break the merge/idempotency/uninstall
-    # assertions below for reasons unrelated to install.sh itself.
-    base = tmp_path / "claude-code-notify"
-    settings = tmp_path / "settings.json"
+def _run(tmp_path, *args, base_name="claude-code-notify", settings=None):
+    # installer.py identifies its own hook entries via a state file kept
+    # beside settings.json (see docs/adr/0001-hook-installation-tracking.md),
+    # not by the base dir name containing a marker substring, so an
+    # arbitrary base_name is safe here and exercises the real behavior.
+    base = tmp_path / base_name
+    settings = settings if settings is not None else tmp_path / "settings.json"
     env = dict(
         os.environ,
         CLAUDE_NOTIFY_HOME=str(base),
@@ -44,7 +41,7 @@ def test_install_places_files_and_merges(tmp_path):
     assert stat.S_IMODE(os.stat(base / "config.env").st_mode) == 0o600
     data = json.loads(settings.read_text())
     for event in ("Stop", "StopFailure", "PermissionRequest"):
-        assert any("claude-code-notify" in e["hooks"][0]["command"] for e in data["hooks"][event])
+        assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
 
 
 def test_install_is_idempotent(tmp_path):
@@ -70,3 +67,60 @@ def test_uninstall_reverts_settings(tmp_path):
     data = json.loads(settings.read_text())
     assert data.get("hooks", {}) == {}
     assert not (base / "hooks").exists()
+
+
+def test_reinstall_after_home_change_replaces_hooks(tmp_path):
+    # Regression test for todo.md issue 7 / ADR 0001: CLAUDE_NOTIFY_HOME
+    # changing between two installs (same settings.json) must not leave a
+    # stale hook entry pointing at the old base dir behind.
+    settings = tmp_path / "settings.json"
+    _run(tmp_path, "--non-interactive", base_name="old-home", settings=settings)
+    result, new_base, settings = _run(
+        tmp_path, "--non-interactive", base_name="new-home", settings=settings
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(settings.read_text())
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
+        entries = data["hooks"][event]
+        assert len(entries) == 1
+        assert str(new_base) in entries[0]["hooks"][0]["command"]
+
+
+def test_uninstall_after_home_change_still_clears_settings(tmp_path):
+    settings = tmp_path / "settings.json"
+    _run(tmp_path, "--non-interactive", base_name="old-home", settings=settings)
+    _run(tmp_path, "--non-interactive", base_name="new-home", settings=settings)
+    result, _, settings = _run(
+        tmp_path, "--uninstall", base_name="new-home", settings=settings
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(settings.read_text())
+    assert data.get("hooks", {}) == {}
+
+
+def test_install_migrates_legacy_entries_without_state_file(tmp_path):
+    # Simulates upgrading a real v0.1.0 install: settings.json already has
+    # entries written by the old marker-substring installer, and no state
+    # file exists yet (it's a new concept). A fresh install.sh run must
+    # adopt and replace them, not duplicate. See ADR 0001.
+    base_name = "claude-code-notify"
+    base = tmp_path / base_name
+    settings = tmp_path / "settings.json"
+    legacy_hooks = {
+        "Stop": [{"matcher": "", "hooks": [
+            {"type": "command", "command": str(base / "hooks" / "stop.sh")}]}],
+        "StopFailure": [{"matcher": "", "hooks": [
+            {"type": "command", "command": str(base / "hooks" / "stop_failure.sh")}]}],
+        "PermissionRequest": [{"matcher": "", "hooks": [
+            {"type": "command", "command": str(base / "hooks" / "permission_request.sh")}]}],
+    }
+    settings.write_text(json.dumps({"hooks": legacy_hooks}))
+    result, base, settings = _run(
+        tmp_path, "--non-interactive", base_name=base_name, settings=settings
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(settings.read_text())
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
+        assert len(data["hooks"][event]) == 1  # adopted, not duplicated
+    state_file = settings.parent / ".claude-code-notify-hooks.json"
+    assert state_file.exists()  # migration produced a state file going forward
