@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import stat
 import subprocess
 
@@ -96,6 +97,44 @@ def test_uninstall_after_home_change_still_clears_settings(tmp_path):
     assert result.returncode == 0, result.stderr
     data = json.loads(settings.read_text())
     assert data.get("hooks", {}) == {}
+
+
+def test_latest_release_lookup_failure_warns_before_falling_back_to_main(tmp_path):
+    # Regression test for todo.md issue 8: if resolving the latest GitHub
+    # release tag fails (offline, rate-limited, no releases yet), install.sh
+    # must print a warning instead of silently using "main".
+    #
+    # Force the tarball-download branch (not the local-checkout `cp` branch)
+    # by copying install.sh alone into a directory with no sibling
+    # claude_code_notify package.
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    shutil.copy(os.path.join(REPO, "install.sh"), isolated / "install.sh")
+
+    # Stub `curl` on PATH to simulate every network call failing, as it
+    # would if the machine were offline or GitHub rate-limited it.
+    stub_bin = tmp_path / "stub_bin"
+    stub_bin.mkdir()
+    curl_stub = stub_bin / "curl"
+    curl_stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    curl_stub.chmod(0o755)
+
+    env = dict(
+        os.environ,
+        PATH=f"{stub_bin}{os.pathsep}{os.environ['PATH']}",
+        CLAUDE_NOTIFY_HOME=str(tmp_path / "ccn-home"),
+        CLAUDE_SETTINGS=str(tmp_path / "settings.json"),
+        TELEGRAM_BOT_TOKEN="123:secret",
+        TELEGRAM_CHAT_ID="999",
+    )
+    result = subprocess.run(
+        ["bash", str(isolated / "install.sh"), "--non-interactive"],
+        capture_output=True, text=True, env=env,
+    )
+    # The tarball download also fails offline, so install still aborts --
+    # this test only asserts the warning is printed before that happens.
+    assert "main" in result.stderr
+    assert "warn" in result.stderr.lower()
 
 
 def test_install_migrates_legacy_entries_without_state_file(tmp_path):

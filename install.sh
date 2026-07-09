@@ -48,9 +48,11 @@ else
       | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)"
     if [ -n "$LATEST_TAG" ]; then
       VERSION="$LATEST_TAG"
+    else
+      # GitHub API unreachable (offline, rate-limited) or no releases
+      # published yet — warn instead of silently tracking main.
+      echo "Warning: could not resolve latest release tag; falling back to 'main'." >&2
     fi
-    # else: no releases published yet — fall through to "main" as a
-    # reasonable bootstrap default.
   fi
 
   TMP="$(mktemp -d)"

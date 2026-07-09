@@ -185,7 +185,7 @@ The installer:
 | Flag | Effect |
 |---|---|
 | `--version <tag>` | Pin a specific release instead of latest. |
-| `--uninstall` | Remove hook entries and installed code (prompt before deleting `config.env`). |
+| `--uninstall` | Remove hook entries, installed code, state, and debug log. Always keeps `config.env` (prints its path for manual deletion) — no prompt, so uninstall stays safe to run non-interactively (e.g. `curl \| bash`). |
 | `--non-interactive` | Read token/chat id from env (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) for CI/automation. |
 
 ### 6.3 Upgrade model
