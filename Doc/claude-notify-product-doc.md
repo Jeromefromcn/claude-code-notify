@@ -91,6 +91,8 @@ This single rule is robust for both tools:
 
 Parse at the JSON **envelope** level (entry `type`, `tool_use`/`tool_result` structure), never by substring-matching text. Debug output that happens to print the words "tool_use_id" or "task-notification" inside some Bash result text must not poison the count.
 
+**Why not the native `SubagentStop` hook instead of transcript parsing?** It doesn't work for this case. Confirmed via multiple open upstream issues: background agents (`run_in_background=true`) bypass `Stop`/`SubagentStop` entirely ([anthropics/claude-code#25147](https://github.com/anthropics/claude-code/issues/25147)), subagent completion isn't reliably reported ([#33049](https://github.com/anthropics/claude-code/issues/33049)), and even when `SubagentStop` does fire it carries the parent's shared `session_id` with no per-subagent identifier ([#7881](https://github.com/anthropics/claude-code/issues/7881)). Transcript-based `<task-notification>`/`tool_use_id` matching is the only reliable signal available today.
+
 ### 4.4 Incremental state (performance)
 
 A transcript only grows within a session and past lines never change. Re-parsing the whole file on every Stop is O(file size) per turn. Instead, cache per-session state in `/<state-dir>/<session-id>.state.json`:
@@ -117,10 +119,10 @@ Within one session, `Stop` can fire many times (e.g. rapid follow-up questions).
 | `pending_tracker.py` | Apply the resolution rule; maintain the per-session state file; compute `PENDING`. | transcript path, state path → `pending: int` |
 | `ratelimit.py` | Dedup/rate-limit marker logic. | session id, threshold → `should_send: bool` |
 | `notifier.py` | Format and send a Telegram message; scrub secrets from any error output. | message fields, config → send result |
-| `config.py` | Locate and load config (bot token, chat id, threshold); resolve global vs project. | env/file → config object |
-| `hooks.py` | Entry points `stop`, `stop_failure`, `permission_request`; wire the pieces; read Claude Code env vars. | env → side effect (notify or not) |
+| `config.py` | Locate and load config (bot token, chat id, threshold, `NOTIFY_DEBUG`); resolve global vs project. | env/file → config object |
+| `hooks.py` | Entry points `stop`, `stop_failure`, `permission_request`; wire the pieces; read Claude Code's hook JSON from stdin; write debug log lines when enabled; never propagate an exception — catch, log, exit 0. | stdin JSON → side effect (notify or not) |
 
-**Bash shims** (`hooks/*.sh`) — thin membranes only. Each reads env (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_TOOL_NAME`, `PWD`) and calls `python3 -m claude_code_notify.hooks <event>`. No business logic.
+**Bash shims** (`hooks/*.sh`) — thin membranes only. Claude Code delivers all hook data (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, etc.) as a single JSON object on **stdin** — not via env vars. (The only real Claude Code env vars are path placeholders: `$CLAUDE_PROJECT_DIR`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PLUGIN_DATA`, plus `$CLAUDE_CODE_REMOTE`/`$CLAUDE_EFFORT`, none of which carry session/transcript/tool identity.) Each shim forwards stdin unchanged to `python3 -m claude_code_notify.hooks <event>`. No business logic.
 
 ### 5.2 Data flow (Stop event)
 
@@ -149,9 +151,14 @@ TELEGRAM_CHAT_ID=8737165697
 # optional
 NOTIFY_RATELIMIT_SECONDS=120
 TELEGRAM_API_BASE=https://api.telegram.org   # override for tests / self-hosted
+NOTIFY_DEBUG=false                           # set true to enable debug.log for troubleshooting
 ```
 
 File is created `chmod 600`. Because config is separate from code, upgrades replace only code files and never risk touching the user's token. (When project-level install lands, a project `config.env` will override the global one — see §11.)
+
+### 5.3.1 Debug logging
+
+Off by default (`NOTIFY_DEBUG=false`) — zero log writes, zero overhead. When set to `true`, `hooks.py` appends timestamped lines to `~/.claude/claude-code-notify/debug.log` (`chmod 600`) for each hook invocation: event name, parsed payload summary, computed `pending` count, rate-limit decision, and any caught exception. This is the primary troubleshooting path when a user reports a missing or wrongly-timed notification — ask them to set `NOTIFY_DEBUG=true`, reproduce, and share the log. Log content is scrubbed of secrets identically to error output (§9).
 
 ### 5.4 Hook integration with settings.json
 
@@ -205,7 +212,8 @@ Design constraint: the core must be verifiable **without** Claude Code and **wit
 ## 9. Security considerations
 
 - **Token isolation:** secrets live only in `config.env` (`chmod 600`), never in `settings.json`, never committed.
-- **Secret scrubbing:** any error/log output from a failed Telegram call is scrubbed of the bot token before display (the token appears in the request URL).
+- **Secret scrubbing:** any error output from a failed Telegram call, and any line written to the optional debug log (§5.3.1), is scrubbed of the bot token before display or write (the token appears in the request URL).
+- **hooks.py must not crash the user's turn:** all entry points catch every exception, log it (if `NOTIFY_DEBUG=true`), and exit 0. A bug in this tool must never surface as a blocked or broken Claude Code turn.
 - **No secret echo:** interactive prompt for the token does not echo it to the terminal.
 - **Least surprise on merge:** installer only ever adds/removes its own tagged hook entries in settings.json.
 - **Supply-chain honesty:** `curl | bash` is convenient but opaque; README documents the exact steps the script performs and offers a `git clone && ./install.sh` path for users who want to read it first.

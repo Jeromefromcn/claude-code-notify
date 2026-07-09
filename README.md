@@ -54,6 +54,7 @@ TELEGRAM_CHAT_ID=8737165697
 # optional
 NOTIFY_RATELIMIT_SECONDS=120
 TELEGRAM_API_BASE=https://api.telegram.org
+NOTIFY_DEBUG=false
 ```
 
 ## Architecture
@@ -71,7 +72,11 @@ Claude Code turn ends
 
 `StopFailure` and `PermissionRequest` skip the pending/rate-limit checks and notify immediately — an error or a block should always be reported promptly.
 
-Bash shims under `hooks/*.sh` are thin membranes: they read Claude Code's env vars and hand off to the Python core (`claude_code_notify/`), which holds all logic and is unit-testable without a live session or a real Telegram API.
+Bash shims under `hooks/*.sh` are thin membranes: Claude Code delivers all hook data as JSON on stdin (not env vars — the only real Claude Code env vars are path placeholders like `$CLAUDE_PROJECT_DIR`), so shims just forward stdin unchanged to the Python core (`claude_code_notify/`), which holds all logic and is unit-testable without a live session or a real Telegram API. `hooks.py` never lets an internal error escape — every entry point catches, optionally logs (see below), and exits 0, so a bug here can never block your Claude Code turn.
+
+### Troubleshooting
+
+Notifications not firing as expected? Set `NOTIFY_DEBUG=true` in `config.env` (default `false`, zero overhead) and reproduce — `hooks.py` will append timestamped, secret-scrubbed detail to `~/.claude/claude-code-notify/debug.log` (`chmod 600`) for every hook invocation: event, parsed payload summary, computed pending count, and rate-limit decision.
 
 ## Security
 
@@ -90,6 +95,10 @@ Out of scope for v1, planned for later:
 - Windows support.
 
 See [Doc/claude-notify-product-doc.md](Doc/claude-notify-product-doc.md) for the full design, including test strategy and repository layout.
+
+## Related work
+
+Several existing tools notify from Claude Code hooks — [starpipi/claude-code-notify](https://github.com/starpipi/claude-code-notify), [777genius/claude-notifications-go](https://github.com/777genius/claude-notifications-go), [decko/claude-code-notify](https://github.com/decko/claude-code-notify), among others. All of them fire on the `Stop`/`Notification` hook directly, without tracking whether a background `Agent` or background `Bash` dispatch is still running — none of them solve the false-positive this project targets (§3 of the design doc). Reviewing their source also surfaced two corrections folded into this design: Claude Code hook input arrives as JSON on stdin, not env vars, and the native `SubagentStop` hook is unreliable for background agents ([anthropics/claude-code#25147](https://github.com/anthropics/claude-code/issues/25147)) — both documented in the design doc.
 
 ## License
 
