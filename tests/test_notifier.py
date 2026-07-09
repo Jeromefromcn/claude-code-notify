@@ -74,3 +74,37 @@ def test_send_failure_scrubs_token():
     with pytest.raises(notifier.NotifierError) as exc:
         notifier.send(cfg, "hi")
     assert "123:secret" not in str(exc.value)
+
+
+class _NotFound(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def test_send_failure_clears_exception_context_leak():
+    # A 404 response makes urlopen raise urllib.error.HTTPError, a URLError
+    # subclass whose `.url` attribute holds the *unredacted* request URL
+    # (including the bot token) even though str(exc) does not contain it.
+    # This reproduces Telegram returning 401/404 for a bad token/chat_id.
+    server = HTTPServer(("127.0.0.1", 0), _NotFound)
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        cfg = _cfg(f"http://{host}:{port}")
+        with pytest.raises(notifier.NotifierError) as exc:
+            notifier.send(cfg, "hi")
+        assert "123:secret" not in str(exc.value)
+        # The gap: `raise ... from None` only suppresses default traceback
+        # display, it does NOT clear __context__, so the original
+        # HTTPError (with the token-bearing .url) stays reachable to any
+        # code that walks the chain explicitly.
+        assert exc.value.__context__ is None
+        assert exc.value.__cause__ is None
+    finally:
+        thread.join(timeout=5)
+        server.server_close()
