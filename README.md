@@ -1,5 +1,9 @@
 # claude-code-notify
 
+[![CI](https://github.com/Jeromefromcn/claude-code-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/Jeromefromcn/claude-code-notify/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
+
 Accurate completion, input-needed, and error notifications for [Claude Code](https://claude.com/claude-code) — starts with Telegram, built to support more channels.
 
 See [docs/claude-notify-product-doc.md](docs/claude-notify-product-doc.md) for the full design and rationale.
