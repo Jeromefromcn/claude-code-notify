@@ -184,6 +184,63 @@ def test_install_downloads_and_extracts_tarball(tmp_path):
         assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
 
 
+def test_install_via_stdin_pipe_ignores_unrelated_cwd_package(tmp_path):
+    # Regression test: install.sh derived SRC_DIR from BASH_SOURCE[0], which
+    # is unset when the script runs the real `curl | bash` way (fed through
+    # stdin, not executed as a file). Under `set -u` this threw "BASH_SOURCE
+    # [0]: unbound variable" — but since a failing command substitution
+    # embedded in an argument doesn't trigger `set -e`, SRC_DIR silently fell
+    # back to the caller's $PWD via `cd ""`. If that directory happened to
+    # contain a claude_code_notify/ folder (e.g. someone ran the documented
+    # one-liner from inside a clone of this repo out of habit), the installer
+    # would silently copy those local files instead of downloading and
+    # verifying the real release tarball — discovered when reinstalling on a
+    # dev machine whose shell cwd was the repo checkout.
+    #
+    # Reproduces the real invocation style (`bash -c "$(cat install.sh)" --
+    # args`, so BASH_SOURCE is genuinely unset, same as piping through `bash`)
+    # from a cwd seeded with decoy claude_code_notify/hooks directories, and
+    # asserts the real tarball (via the file:// fixture) is what gets
+    # installed, not the decoy content.
+    decoy_cwd = tmp_path / "decoy_cwd"
+    (decoy_cwd / "claude_code_notify").mkdir(parents=True)
+    (decoy_cwd / "claude_code_notify" / "DECOY.txt").write_text("should never be copied")
+    (decoy_cwd / "hooks").mkdir()
+    (decoy_cwd / "hooks" / "DECOY_STOP.sh").write_text("#!/usr/bin/env bash\necho decoy\n")
+
+    staging = tmp_path / "staging" / "claude-code-notify-main"
+    shutil.copytree(
+        os.path.join(REPO, "claude_code_notify"), staging / "claude_code_notify",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copytree(os.path.join(REPO, "hooks"), staging / "hooks")
+    tarball_root = tmp_path / "tarball_root"
+    (tarball_root / "heads").mkdir(parents=True)
+    with tarfile.open(tarball_root / "heads" / "main.tar.gz", "w:gz") as tf:
+        tf.add(staging, arcname="claude-code-notify-main")
+
+    install_script = open(os.path.join(REPO, "install.sh")).read()
+    base = tmp_path / "claude-code-notify"
+    settings = tmp_path / "settings.json"
+    env = dict(
+        os.environ,
+        CLAUDE_NOTIFY_HOME=str(base),
+        CLAUDE_SETTINGS=str(settings),
+        CLAUDE_NOTIFY_TARBALL_BASE=f"file://{tarball_root}",
+        TELEGRAM_BOT_TOKEN="123:secret",
+        TELEGRAM_CHAT_ID="999",
+    )
+    result = subprocess.run(
+        ["bash", "-c", install_script, "--", "--non-interactive", "--version", "main"],
+        capture_output=True, text=True, env=env, cwd=decoy_cwd,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (base / "claude_code_notify" / "DECOY.txt").exists()
+    assert not (base / "hooks" / "DECOY_STOP.sh").exists()
+    assert (base / "claude_code_notify" / "hooks.py").exists()
+    assert (base / "hooks" / "stop.sh").exists()
+
+
 def test_install_migrates_legacy_entries_without_state_file(tmp_path):
     # Simulates upgrading a real v0.1.0 install: settings.json already has
     # entries written by the old marker-substring installer, and no state

@@ -38,8 +38,19 @@ mkdir -p "$BASE_DIR"
 
 # Obtain the package. If running from a checkout (install.sh sits next to the
 # package), copy locally; otherwise download the pinned tarball.
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$SRC_DIR/claude_code_notify" ]; then
+#
+# BASH_SOURCE is unset when the script runs via `curl | bash` (fed through
+# stdin, not executed as a file), and this script runs under `set -u`. Only
+# derive SRC_DIR from BASH_SOURCE when it actually points at a real file;
+# otherwise fall straight through to the download branch. Do NOT fall back to
+# deriving SRC_DIR from the caller's $PWD — that would make the local-checkout
+# detection depend on whatever directory happened to be current, which could
+# silently pick up an unrelated (or stale) claude_code_notify/ directory there.
+SRC_DIR=""
+if [ -n "${BASH_SOURCE:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+if [ -n "$SRC_DIR" ] && [ -d "$SRC_DIR/claude_code_notify" ]; then
   cp -R "$SRC_DIR/claude_code_notify" "$SRC_DIR/hooks" "$BASE_DIR/"
 else
   # Default (no --version given): resolve the latest published GitHub release
