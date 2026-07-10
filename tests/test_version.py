@@ -9,7 +9,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_version_string():
-    assert claude_code_notify.__version__ == "0.1.0"
+    assert claude_code_notify.__version__ == "0.1.1"
 
 
 def test_version_cli():
@@ -18,7 +18,7 @@ def test_version_cli():
         capture_output=True, text=True,
     )
     assert out.returncode == 0
-    assert out.stdout.strip() == "0.1.0"
+    assert out.stdout.strip() == "0.1.1"
 
 
 def test_pyproject_version_matches_package_version():
