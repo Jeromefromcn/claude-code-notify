@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- CI now also runs the test matrix on `macos-latest`, not just `ubuntu-latest`.
+- Test coverage for `install.sh`'s tarball-download path (todo.md issue 9),
+  via a `file://`-served fixture tarball and a new test-only
+  `CLAUDE_NOTIFY_TARBALL_BASE` override.
+- Test guarding against `pyproject.toml`'s version and
+  `claude_code_notify.__version__` drifting apart.
+
+### Changed
+- README version badge is now dynamic (tracks the latest GitHub Release)
+  instead of a hardcoded string.
+
 ## [0.1.0] - 2026-07-09
 
 ### Added

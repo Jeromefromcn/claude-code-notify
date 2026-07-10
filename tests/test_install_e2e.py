@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tarfile
 
 import pytest
 
@@ -135,6 +136,52 @@ def test_latest_release_lookup_failure_warns_before_falling_back_to_main(tmp_pat
     # this test only asserts the warning is printed before that happens.
     assert "main" in result.stderr
     assert "warn" in result.stderr.lower()
+
+
+def test_install_downloads_and_extracts_tarball(tmp_path):
+    # Regression test for todo.md issue 9: the tarball-download branch of
+    # install.sh — the one every real `curl | bash` install actually takes —
+    # previously had no coverage; only the local-checkout `cp` branch did.
+    # Builds a real gzipped tarball matching GitHub's archive layout (one
+    # top-level wrapper dir, removed via --strip-components=1) and serves it
+    # over a file:// URL via CLAUDE_NOTIFY_TARBALL_BASE, so this exercises
+    # the real curl+tar code path without needing network access.
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    shutil.copy(os.path.join(REPO, "install.sh"), isolated / "install.sh")
+
+    staging = tmp_path / "staging" / "claude-code-notify-main"
+    shutil.copytree(
+        os.path.join(REPO, "claude_code_notify"), staging / "claude_code_notify",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copytree(os.path.join(REPO, "hooks"), staging / "hooks")
+
+    tarball_root = tmp_path / "tarball_root"
+    (tarball_root / "heads").mkdir(parents=True)
+    with tarfile.open(tarball_root / "heads" / "main.tar.gz", "w:gz") as tf:
+        tf.add(staging, arcname="claude-code-notify-main")
+
+    base = tmp_path / "claude-code-notify"
+    settings = tmp_path / "settings.json"
+    env = dict(
+        os.environ,
+        CLAUDE_NOTIFY_HOME=str(base),
+        CLAUDE_SETTINGS=str(settings),
+        CLAUDE_NOTIFY_TARBALL_BASE=f"file://{tarball_root}",
+        TELEGRAM_BOT_TOKEN="123:secret",
+        TELEGRAM_CHAT_ID="999",
+    )
+    result = subprocess.run(
+        ["bash", str(isolated / "install.sh"), "--non-interactive", "--version", "main"],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (base / "claude_code_notify" / "hooks.py").exists()
+    assert (base / "hooks" / "stop.sh").exists()
+    data = json.loads(settings.read_text())
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
+        assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
 
 
 def test_install_migrates_legacy_entries_without_state_file(tmp_path):
