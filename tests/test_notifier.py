@@ -37,6 +37,21 @@ def test_build_message_needs_input():
     assert msg.startswith("Claude Code needs your input |")
 
 
+def test_build_message_with_duration_and_title():
+    msg = notifier.build_message("finished", "/home/x", "09/07/2026 10:00:00", "My Task", "3m12s")
+    assert msg == "Claude Code finished | 3m12s | My Task | /home/x | 09/07/2026 10:00:00"
+
+
+def test_build_message_with_duration_no_title():
+    msg = notifier.build_message("error", "/home/x", "09/07/2026 10:00:00", None, "45s")
+    assert msg == "Claude Code stopped with error | 45s | /home/x | 09/07/2026 10:00:00"
+
+
+def test_build_message_omits_absent_duration():
+    msg = notifier.build_message("finished", "/home/x", "09/07/2026 10:00:00", "My Task")
+    assert msg == "Claude Code finished | My Task | /home/x | 09/07/2026 10:00:00"
+
+
 class _Capture(BaseHTTPRequestHandler):
     received = {}
 

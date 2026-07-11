@@ -20,8 +20,10 @@ def scrub(text, token):
     return text
 
 
-def build_message(kind, cwd, when, title=None):
+def build_message(kind, cwd, when, title=None, duration=None):
     parts = [_HEADS[kind]]
+    if duration:
+        parts.append(duration)
     if title:
         parts.append(title)
     parts.append(cwd)
