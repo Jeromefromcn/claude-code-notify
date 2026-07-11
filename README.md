@@ -21,6 +21,7 @@ Claude Code runs long, multi-step turns and exposes `Stop`, `StopFailure`, and `
 - Installs with one command; the only runtime dependency is `python3`.
 - Ships fixes and improvements as new versions — `install latest` upgrades notification accuracy.
 - Keeps secrets out of `settings.json` entirely.
+- **Costs zero Claude Code tokens** — hooks run as a local Python subprocess that reads the transcript file directly; no Claude/LLM API call is ever made.
 
 ## Installation
 
@@ -93,6 +94,8 @@ Claude Code turn ends
 `StopFailure` and `PermissionRequest` skip the pending/rate-limit checks and notify immediately — an error or a block should always be reported promptly.
 
 Bash shims under `hooks/*.sh` are thin membranes: Claude Code delivers all hook data as JSON on stdin (not env vars — the only real Claude Code env vars are path placeholders like `$CLAUDE_PROJECT_DIR`), so shims just forward stdin unchanged to the Python core (`claude_code_notify/`), which holds all logic and is unit-testable without a live session or a real Telegram API. `hooks.py` never lets an internal error escape — every entry point catches, optionally logs (see below), and exits 0, so a bug here can never block your Claude Code turn.
+
+None of this touches the Claude API: the whole flow above is local file I/O (reading the transcript) and local computation. The only network call anywhere in the tool is the outbound Telegram `sendMessage` request in `notifier.send`. So sending notifications never consumes Claude Code tokens.
 
 ### Troubleshooting
 
