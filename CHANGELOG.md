@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-07-11
+
+### Fixed
+- `install.sh` guessed "branch" before "tag" when fetching the release
+  tarball (`archive/refs/heads/` then `archive/refs/tags/` as fallback).
+  Since the default install path resolves to a release tag, not a branch,
+  every ordinary `curl | bash` install hit a guaranteed 404 on the first
+  guess before the fallback quietly succeeded. Switched to GitHub's
+  `archive/<ref>.tar.gz` endpoint, which resolves branches, tags, and
+  commit SHAs uniformly with no guessing.
+
 ## [0.2.0] - 2026-07-11
 
 ### Added
