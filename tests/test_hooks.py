@@ -144,3 +144,50 @@ def test_debug_log_written_and_scrubbed(tmp_path, monkeypatch):
     log = (tmp_path / "debug.log").read_text()
     assert "pending=1" in log
     assert "123:secret" not in log
+
+
+def test_format_duration_seconds():
+    assert hooks._format_duration(0) == "0s"
+    assert hooks._format_duration(45) == "45s"
+    assert hooks._format_duration(59) == "59s"
+
+
+def test_format_duration_minutes():
+    assert hooks._format_duration(60) == "1m00s"
+    assert hooks._format_duration(192) == "3m12s"
+    assert hooks._format_duration(3599) == "59m59s"
+
+
+def test_format_duration_hours():
+    assert hooks._format_duration(3600) == "1h00m"
+    assert hooks._format_duration(3900) == "1h05m"
+
+
+def test_format_duration_negative_or_none_is_none():
+    assert hooks._format_duration(-1) is None
+    assert hooks._format_duration(None) is None
+
+
+def test_parse_ts_valid():
+    assert hooks._parse_ts("2026-07-11T01:00:00.000Z") == pytest.approx(1783731600.0)
+
+
+def test_parse_ts_invalid_returns_none():
+    assert hooks._parse_ts("not a timestamp") is None
+    assert hooks._parse_ts(None) is None
+
+
+def test_turn_duration_no_turn_start_returns_none(tmp_path):
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Bash","input":{}}]}}',
+    ])
+    assert hooks._turn_duration(transcript, hooks._now()) is None
+
+
+def test_turn_duration_computed_from_transcript(tmp_path):
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"go"}]}}',
+    ])
+    start = hooks._parse_ts("2026-07-11T01:00:00.000Z")
+    assert hooks._turn_duration(transcript, start + 192) == "3m12s"

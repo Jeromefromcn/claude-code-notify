@@ -8,7 +8,7 @@ from . import config as cfg
 from . import notifier
 from . import ratelimit
 from .pending_tracker import compute_pending
-from .transcript_parser import latest_ai_title
+from .transcript_parser import latest_ai_title, turn_start_timestamp
 
 
 def _now():
@@ -17,6 +17,36 @@ def _now():
 
 def _when():
     return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _format_duration(seconds):
+    if seconds is None or seconds < 0:
+        return None
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h{mins:02d}m"
+
+
+def _parse_ts(ts):
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _turn_duration(transcript, now):
+    start_str = turn_start_timestamp(transcript)
+    if not start_str:
+        return None
+    start = _parse_ts(start_str)
+    if start is None:
+        return None
+    return _format_duration(now - start)
 
 
 def _debug(config, line):
