@@ -57,6 +57,19 @@ def _completion_ids(envelope):
         yield match.group(1)
 
 
+def _is_turn_start(envelope):
+    if envelope.get("type") != "user" or envelope.get("isSidechain"):
+        return False
+    message = envelope.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        return any(
+            not (isinstance(block, dict) and block.get("type") == "tool_result")
+            for block in content
+        )
+    return bool(content)
+
+
 def parse_events(path, offset=0):
     events = []
     try:
@@ -103,3 +116,23 @@ def latest_ai_title(path):
     except (FileNotFoundError, IsADirectoryError, OSError):
         return None
     return title
+
+
+def turn_start_timestamp(path):
+    result = None
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                try:
+                    envelope = json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if not isinstance(envelope, dict):
+                    continue
+                if _is_turn_start(envelope):
+                    ts = envelope.get("timestamp")
+                    if ts:
+                        result = ts
+    except (FileNotFoundError, IsADirectoryError, OSError):
+        return None
+    return result

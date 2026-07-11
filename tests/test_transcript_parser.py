@@ -90,3 +90,53 @@ def test_malformed_line_skipped(tmp_path):
 def test_latest_ai_title():
     assert tp.latest_ai_title(os.path.join(FIX, "foreground_only.jsonl")) == "List files"
     assert tp.latest_ai_title(os.path.join(FIX, "bg_agent_pending.jsonl")) is None
+
+
+def test_turn_start_timestamp_picks_last_real_user_entry(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"first question"}]}}\n'
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:05.000Z",'
+        '"message":{"content":[{"type":"text","text":"answer"}]}}\n'
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:05:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"follow up"}]}}\n'
+    )
+    assert tp.turn_start_timestamp(str(path)) == "2026-07-11T01:05:00.000Z"
+
+
+def test_turn_start_timestamp_ignores_sidechain(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"real"}]}}\n'
+        '{"type":"user","isSidechain":true,"timestamp":"2026-07-11T01:10:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"subagent internal"}]}}\n'
+    )
+    assert tp.turn_start_timestamp(str(path)) == "2026-07-11T01:00:00.000Z"
+
+
+def test_turn_start_timestamp_ignores_tool_result_only(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"real turn start"}]}}\n'
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:20:00.000Z",'
+        '"message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"done"}]}}\n'
+    )
+    # The tool_result envelope is a background task reporting back mid-turn,
+    # not a new turn start, so the earlier real entry still wins.
+    assert tp.turn_start_timestamp(str(path)) == "2026-07-11T01:00:00.000Z"
+
+
+def test_turn_start_timestamp_no_match_returns_none(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Bash","input":{}}]}}\n'
+    )
+    assert tp.turn_start_timestamp(str(path)) is None
+
+
+def test_turn_start_timestamp_missing_file_returns_none():
+    assert tp.turn_start_timestamp("/no/such/file.jsonl") is None
