@@ -76,22 +76,27 @@ def handle_stop(payload, config):
         _debug(config, f"stop session={session_id} suppressed by rate-limit")
         return
     title = latest_ai_title(transcript)
-    notifier.send(config, notifier.build_message("finished", cwd, _when(), title))
+    duration = _turn_duration(transcript, _now())
+    notifier.send(config, notifier.build_message("finished", cwd, _when(), title, duration))
     ratelimit.record_sent(marker, _now())
     _debug(config, f"stop session={session_id} notified")
 
 
 def handle_stop_failure(payload, config):
     cwd = payload.get("cwd", "")
-    title = latest_ai_title(payload.get("transcript_path", ""))
-    notifier.send(config, notifier.build_message("error", cwd, _when(), title))
+    transcript = payload.get("transcript_path", "")
+    title = latest_ai_title(transcript)
+    duration = _turn_duration(transcript, _now())
+    notifier.send(config, notifier.build_message("error", cwd, _when(), title, duration))
     _debug(config, "stop_failure notified")
 
 
 def handle_permission_request(payload, config):
     cwd = payload.get("cwd", "")
-    title = latest_ai_title(payload.get("transcript_path", ""))
-    notifier.send(config, notifier.build_message("needs-input", cwd, _when(), title))
+    transcript = payload.get("transcript_path", "")
+    title = latest_ai_title(transcript)
+    duration = _turn_duration(transcript, _now())
+    notifier.send(config, notifier.build_message("needs-input", cwd, _when(), title, duration))
     _debug(config, "permission_request notified")
 
 

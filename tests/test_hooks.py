@@ -191,3 +191,61 @@ def test_turn_duration_computed_from_transcript(tmp_path):
     ])
     start = hooks._parse_ts("2026-07-11T01:00:00.000Z")
     assert hooks._turn_duration(transcript, start + 192) == "3m12s"
+
+
+def test_stop_includes_duration_when_turn_start_present(base, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:03:12.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"go"}]}}',
+        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}',
+        '{"type":"ai-title","aiTitle":"Do a thing"}',
+    ])
+    payload = {"session_id": "sdur1", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert sent[0] == "Claude Code finished | 3m12s | Do a thing | /w | " + sent[0].split(" | ")[-1]
+
+
+def test_stop_omits_duration_without_turn_start(base, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}',
+        '{"type":"ai-title","aiTitle":"Do a thing"}',
+    ])
+    payload = {"session_id": "sdur2", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert sent[0] == "Claude Code finished | Do a thing | /w | " + sent[0].split(" | ")[-1]
+
+
+def test_stop_failure_includes_duration(base, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:00:45.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"go"}]}}',
+    ])
+    payload = {"session_id": "sdur3", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert sent[0] == "Claude Code stopped with error | 45s | /w | " + sent[0].split(" | ")[-1]
+
+
+def test_permission_request_includes_duration(base, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:01:00.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"go"}]}}',
+    ])
+    payload = {"session_id": "sdur4", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("permission_request", json.dumps(payload)) == 0
+    assert sent[0] == "Claude Code needs your input | 1m00s | /w | " + sent[0].split(" | ")[-1]
