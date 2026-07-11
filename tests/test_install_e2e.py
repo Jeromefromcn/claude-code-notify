@@ -158,8 +158,8 @@ def test_install_downloads_and_extracts_tarball(tmp_path):
     shutil.copytree(os.path.join(REPO, "hooks"), staging / "hooks")
 
     tarball_root = tmp_path / "tarball_root"
-    (tarball_root / "heads").mkdir(parents=True)
-    with tarfile.open(tarball_root / "heads" / "main.tar.gz", "w:gz") as tf:
+    tarball_root.mkdir()
+    with tarfile.open(tarball_root / "main.tar.gz", "w:gz") as tf:
         tf.add(staging, arcname="claude-code-notify-main")
 
     base = tmp_path / "claude-code-notify"
@@ -182,6 +182,54 @@ def test_install_downloads_and_extracts_tarball(tmp_path):
     data = json.loads(settings.read_text())
     for event in ("Stop", "StopFailure", "PermissionRequest"):
         assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
+
+
+def test_install_tag_version_no_spurious_curl_error(tmp_path):
+    # Regression test: install.sh fetched the tarball by guessing "branch"
+    # first (archive/refs/heads/<ref>.tar.gz), falling back to "tag"
+    # (archive/refs/tags/<ref>.tar.gz) only after that failed. But the
+    # default install path (no --version) resolves VERSION to a release
+    # tag, not a branch, via the GitHub API — so every default `curl | bash`
+    # install hit a guaranteed 404 on the first guess before the fallback
+    # quietly succeeded, printing a misleading curl error to stderr on every
+    # single ordinary install. Reproduces this with a tag-shaped --version
+    # and a tarball fixture served at the flat (ref-type-agnostic) path
+    # GitHub's archive/<ref>.tar.gz endpoint actually uses — asserts both
+    # that install still succeeds AND that stderr carries no curl error
+    # noise from a failed first guess.
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    shutil.copy(os.path.join(REPO, "install.sh"), isolated / "install.sh")
+
+    staging = tmp_path / "staging" / "claude-code-notify-v9.9.9"
+    shutil.copytree(
+        os.path.join(REPO, "claude_code_notify"), staging / "claude_code_notify",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copytree(os.path.join(REPO, "hooks"), staging / "hooks")
+
+    tarball_root = tmp_path / "tarball_root"
+    tarball_root.mkdir()
+    with tarfile.open(tarball_root / "v9.9.9.tar.gz", "w:gz") as tf:
+        tf.add(staging, arcname="claude-code-notify-v9.9.9")
+
+    base = tmp_path / "claude-code-notify"
+    settings = tmp_path / "settings.json"
+    env = dict(
+        os.environ,
+        CLAUDE_NOTIFY_HOME=str(base),
+        CLAUDE_SETTINGS=str(settings),
+        CLAUDE_NOTIFY_TARBALL_BASE=f"file://{tarball_root}",
+        TELEGRAM_BOT_TOKEN="123:secret",
+        TELEGRAM_CHAT_ID="999",
+    )
+    result = subprocess.run(
+        ["bash", str(isolated / "install.sh"), "--non-interactive", "--version", "v9.9.9"],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (base / "claude_code_notify" / "hooks.py").exists()
+    assert result.stderr == ""
 
 
 def test_install_via_stdin_pipe_ignores_unrelated_cwd_package(tmp_path):
@@ -215,8 +263,8 @@ def test_install_via_stdin_pipe_ignores_unrelated_cwd_package(tmp_path):
     )
     shutil.copytree(os.path.join(REPO, "hooks"), staging / "hooks")
     tarball_root = tmp_path / "tarball_root"
-    (tarball_root / "heads").mkdir(parents=True)
-    with tarfile.open(tarball_root / "heads" / "main.tar.gz", "w:gz") as tf:
+    tarball_root.mkdir()
+    with tarfile.open(tarball_root / "main.tar.gz", "w:gz") as tf:
         tf.add(staging, arcname="claude-code-notify-main")
 
     install_script = open(os.path.join(REPO, "install.sh")).read()

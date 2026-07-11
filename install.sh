@@ -7,7 +7,7 @@ set -euo pipefail
 # CLAUDE_NOTIFY_TARBALL_BASE is test-only (like CLAUDE_NOTIFY_HOME): lets
 # tests point the download path at a file:// tarball instead of GitHub, so
 # the actual curl+tar install path can be exercised without network access.
-REPO_TARBALL="${CLAUDE_NOTIFY_TARBALL_BASE:-https://github.com/Jeromefromcn/claude-code-notify/archive/refs}"
+REPO_TARBALL="${CLAUDE_NOTIFY_TARBALL_BASE:-https://github.com/Jeromefromcn/claude-code-notify/archive}"
 BASE_DIR="${CLAUDE_NOTIFY_HOME:-$HOME/.claude/claude-code-notify}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 MODE="install"
@@ -68,9 +68,15 @@ else
     fi
   fi
 
+  # GitHub's archive/<ref>.tar.gz endpoint resolves branches, tags, and
+  # commit SHAs uniformly in a single request — unlike archive/refs/heads/
+  # or archive/refs/tags/, which require knowing the ref type up front.
+  # VERSION is a branch only when explicitly overridden; by default (see
+  # above) it's a release tag, so a heads-then-tags guess-and-fallback
+  # would 404 on every ordinary install before its fallback quietly
+  # succeeded — this single request has no such guess to get wrong.
   TMP="$(mktemp -d)"
-  curl -fsSL "$REPO_TARBALL/heads/$VERSION.tar.gz" -o "$TMP/pkg.tgz" \
-    || curl -fsSL "$REPO_TARBALL/tags/$VERSION.tar.gz" -o "$TMP/pkg.tgz"
+  curl -fsSL "$REPO_TARBALL/$VERSION.tar.gz" -o "$TMP/pkg.tgz"
   tar -xzf "$TMP/pkg.tgz" -C "$TMP" --strip-components=1
   cp -R "$TMP/claude_code_notify" "$TMP/hooks" "$BASE_DIR/"
   rm -rf "$TMP"
