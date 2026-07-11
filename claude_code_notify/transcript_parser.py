@@ -60,6 +60,8 @@ def _completion_ids(envelope):
 def _is_turn_start(envelope):
     if envelope.get("type") != "user" or envelope.get("isSidechain"):
         return False
+    if (envelope.get("origin") or {}).get("kind") == "task-notification":
+        return False
     message = envelope.get("message") or {}
     content = message.get("content")
     if isinstance(content, list):

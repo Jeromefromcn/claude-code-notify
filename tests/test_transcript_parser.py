@@ -140,3 +140,16 @@ def test_turn_start_timestamp_no_match_returns_none(tmp_path):
 
 def test_turn_start_timestamp_missing_file_returns_none():
     assert tp.turn_start_timestamp("/no/such/file.jsonl") is None
+
+
+def test_turn_start_timestamp_excludes_task_notification_envelope(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"user","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"text","text":"real turn start"}]}}\n'
+        '{"type":"user","origin":{"kind":"task-notification"},"timestamp":"2026-07-11T01:00:05.000Z",'
+        '"message":{"role":"user","content":"<task-notification>\\n<tool-use-id>toolu_ag3</tool-use-id>\\n<status>completed</status>\\n</task-notification>"}}\n'
+    )
+    # Task-notification envelope should not be treated as a turn-start,
+    # even though it has type="user" and non-empty content.
+    assert tp.turn_start_timestamp(str(path)) == "2026-07-11T01:00:00.000Z"
