@@ -17,6 +17,7 @@ Claude Code runs long, multi-step turns and exposes `Stop`, `StopFailure`, and `
 ## What it does
 
 - Sends a Telegram message **only** when a turn genuinely finishes, needs your input, or errors out.
+- Shows how long the turn took (e.g. `3m12s`) right in the notification.
 - Correctly waits for background work (both `Agent` subagents and background `Bash`) before declaring completion.
 - Installs with one command; the only runtime dependency is `python3`.
 - Ships fixes and improvements as new versions — `install latest` upgrades notification accuracy.
