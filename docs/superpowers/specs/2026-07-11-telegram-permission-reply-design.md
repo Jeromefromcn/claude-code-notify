@@ -1,5 +1,37 @@
 # Design: bidirectional Telegram reply for permission requests (phase 1)
 
+> **Status: Shelved (2026-07-12).** Not being implemented for now. Two
+> hook-level constraints, confirmed against the official Claude Code hooks
+> reference, made the scope too narrow to be worth it:
+>
+> - `AskUserQuestion` (multi-option + free-text decisions) cannot be
+>   answered from a hook at all. It does trigger `PermissionRequest` (a
+>   known Claude Code quirk — upstream issue
+>   [anthropics/claude-code#15400](https://github.com/anthropics/claude-code/issues/15400),
+>   closed "not planned"), exposing `tool_name`/`tool_input`, but the
+>   `decision` output only supports `behavior: allow|deny` — allowing just
+>   lets the tool run normally (falls back to the local terminal prompt);
+>   denying just blocks the question outright. Neither answers it. An
+>   upstream request to add hook support for this
+>   ([anthropics/claude-code#15872](https://github.com/anthropics/claude-code/issues/15872))
+>   was also closed "not planned". A production implementation would need
+>   to special-case `tool_name == "AskUserQuestion"` and skip the
+>   button/wait flow entirely for it (plain notify only).
+> - For ordinary tool permission requests, `decision.behavior` supports
+>   only `allow`/`deny` — there is no session-scoped "always allow" third
+>   option (no `scope`/`remember` field in the schema). The only way to
+>   express that would be a hook writing directly to
+>   `.claude/settings.local.json`, bypassing the `decision` output
+>   entirely — undocumented, races with Claude Code's own reads/writes of
+>   that file, and not guaranteed stable across versions.
+>
+> With `AskUserQuestion` unreachable and no "always allow" option, the
+> remaining scope (bare Allow/Deny on plain tool permission prompts) was
+> judged not worth the implementation cost. Revisit if Claude Code ever
+> exposes richer hook-level control over `AskUserQuestion` or session-scoped
+> permission grants. The design below is kept as-is as a record of what was
+> explored; it does not reflect any of the above constraints in its body.
+
 ## Goal
 
 Today `claude-code-notify` is push-only: it tells you Claude needs a
