@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ from datetime import datetime
 from . import config as cfg
 from . import notifier
 from . import ratelimit
+from . import routing
 from .pending_tracker import compute_pending
 from .transcript_parser import latest_ai_title, turn_start_timestamp
 
@@ -67,6 +69,10 @@ def handle_stop(payload, config):
     session_id = payload.get("session_id", "")
     transcript = payload.get("transcript_path", "")
     cwd = payload.get("cwd", "")
+    res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
+    if res.muted:
+        _debug(config, f"stop cwd={cwd} muted — no send")
+        return
     pending = compute_pending(transcript, str(cfg.state_path(config.base_dir, session_id)))
     _debug(config, f"stop session={session_id} pending={pending}")
     if pending > 0:
@@ -77,27 +83,38 @@ def handle_stop(payload, config):
         return
     title = latest_ai_title(transcript)
     duration = _turn_duration(transcript, _now())
-    notifier.send(config, notifier.build_message("finished", cwd, _when(), title, duration))
+    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+    notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
     ratelimit.record_sent(marker, _now())
-    _debug(config, f"stop session={session_id} notified")
+    _debug(config, f"stop session={session_id} notified chat={res.chat_id}")
 
 
 def handle_stop_failure(payload, config):
     cwd = payload.get("cwd", "")
+    res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
+    if res.muted:
+        _debug(config, f"stop_failure cwd={cwd} muted — no send")
+        return
     transcript = payload.get("transcript_path", "")
     title = latest_ai_title(transcript)
     duration = _turn_duration(transcript, _now())
-    notifier.send(config, notifier.build_message("error", cwd, _when(), title, duration))
-    _debug(config, "stop_failure notified")
+    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+    notifier.send(dest, notifier.build_message("error", cwd, _when(), title, duration))
+    _debug(config, f"stop_failure notified chat={res.chat_id}")
 
 
 def handle_permission_request(payload, config):
     cwd = payload.get("cwd", "")
+    res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
+    if res.muted:
+        _debug(config, f"permission_request cwd={cwd} muted — no send")
+        return
     transcript = payload.get("transcript_path", "")
     title = latest_ai_title(transcript)
     duration = _turn_duration(transcript, _now())
-    notifier.send(config, notifier.build_message("needs-input", cwd, _when(), title, duration))
-    _debug(config, "permission_request notified")
+    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+    notifier.send(dest, notifier.build_message("needs-input", cwd, _when(), title, duration))
+    _debug(config, f"permission_request notified chat={res.chat_id}")
 
 
 _HANDLERS = {

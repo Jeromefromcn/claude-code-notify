@@ -160,6 +160,24 @@ File is created `chmod 600`. Because config is separate from code, upgrades repl
 
 Off by default (`NOTIFY_DEBUG=false`) — zero log writes, zero overhead. When set to `true`, `hooks.py` appends timestamped lines to `~/.claude/claude-code-notify/debug.log` (`chmod 600`) for each hook invocation: event name, parsed payload summary, computed `pending` count, rate-limit decision, and any caught exception. This is the primary troubleshooting path when a user reports a missing or wrongly-timed notification — ask them to set `NOTIFY_DEBUG=true`, reproduce, and share the log. Log content is scrubbed of secrets identically to error output (§9).
 
+### 5.3.2 Directory routing (v0.3.0)
+
+Optional `ROUTE_<n>_*` keys route notifications to different destinations by
+the session's `cwd`:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `ROUTE_<n>_DIR` | yes | Absolute directory path |
+| `ROUTE_<n>_CHAT_ID` | yes, unless muted | Target chat for this subtree |
+| `ROUTE_<n>_BOT_TOKEN` | no | Override bot for this subtree; absent → global bot |
+| `ROUTE_<n>_MUTE` | no | `true` → suppress notifications for this subtree |
+
+Resolution is longest directory-prefix match over the realpath-normalized
+`cwd`: a configured directory covers its whole subtree, a deeper directory
+overrides a shallower one, and a muted subtree sends nothing. Any `cwd`
+matching no route uses the global `TELEGRAM_CHAT_ID`. Inspect resolution with
+`python3 -m claude_code_notify --check-route [dir]`.
+
 ### 5.4 Hook integration with settings.json
 
 The installer merges **only** `claude-code-notify`'s own hook entries into the `hooks` block of the target `settings.json`, using Python (`json` module) — never `sed`/string surgery. Which entries are "ours" is tracked by a sidecar state file (`.claude-code-notify-hooks.json`, next to `settings.json`) recording the exact command string written last time, so re-install replaces its own entries idempotently and leaves any other user hooks untouched even if the install path (`base_dir`) changes between runs. A one-time legacy substring match (command path containing `claude-code-notify`) claims pre-existing entries from installs that predate this state file. Uninstall removes exactly those entries. See [ADR 0001](adr/0001-hook-installation-tracking.md).
@@ -256,7 +274,7 @@ claude-code-notify/
 
 ## 11. Roadmap (post-v1, explicitly out of scope now)
 
-- **Project-level install** (`--local`): install into `<project>/.claude/` with a project `config.env` that overrides the global one, so different projects can use different bots/chats.
+- **Project-level install** (`--local`): install into `<project>/.claude/` with a project `config.env`. Note: the common "different projects → different bots/chats" need is now met centrally by directory routing (§5.3.2, v0.3.0); per-project install remains optional future work for fully isolated project configs.
 - Additional channels (Slack, Discord, generic webhook) behind the `notifier` interface.
 - Configurable message templates and localization.
 - Tracking other long-lived background work if Claude Code adds it (e.g. `ScheduleWakeup`, `Monitor`) — evaluate per-signal; a scheduled wake-up is intentional idle, not incomplete work.

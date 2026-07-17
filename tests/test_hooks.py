@@ -249,3 +249,58 @@ def test_permission_request_includes_duration(base, tmp_path, monkeypatch):
     payload = {"session_id": "sdur4", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("permission_request", json.dumps(payload)) == 0
     assert sent[0] == "Claude Code needs your input | 1m00s | /w | " + sent[0].split(" | ")[-1]
+
+
+def _write_config(tmp_path, routes_block=""):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\n"
+        "TELEGRAM_API_BASE=http://127.0.0.1:1\n" + routes_block
+    )
+
+
+def test_stop_failure_routes_to_matching_destination(tmp_path, monkeypatch):
+    _write_config(tmp_path,
+                  "ROUTE_1_DIR=/proj/acme\nROUTE_1_CHAT_ID=111\nROUTE_1_BOT_TOKEN=777:route\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    captured = []
+    monkeypatch.setattr(hooks.notifier, "send",
+                        lambda c, t: captured.append((c.bot_token, c.chat_id)))
+    transcript = _write_transcript(tmp_path, [])
+    payload = {"session_id": "r1", "transcript_path": transcript, "cwd": "/proj/acme/sub"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert captured == [("777:route", "111")]
+
+
+def test_stop_failure_muted_route_does_not_send(tmp_path, monkeypatch):
+    _write_config(tmp_path, "ROUTE_1_DIR=/proj/scratch\nROUTE_1_MUTE=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [])
+    payload = {"session_id": "r2", "transcript_path": transcript, "cwd": "/proj/scratch/x"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert sent == []
+
+
+def test_stop_muted_route_short_circuits(tmp_path, monkeypatch):
+    # The Stop path has pending/rate-limit; mute must short-circuit before send.
+    _write_config(tmp_path, "ROUTE_1_DIR=/proj/scratch\nROUTE_1_MUTE=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [])  # nothing pending
+    payload = {"session_id": "r3", "transcript_path": transcript, "cwd": "/proj/scratch/x"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert sent == []
+
+
+def test_permission_request_unmatched_cwd_uses_global(tmp_path, monkeypatch):
+    _write_config(tmp_path, "ROUTE_1_DIR=/proj/acme\nROUTE_1_CHAT_ID=111\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    captured = []
+    monkeypatch.setattr(hooks.notifier, "send",
+                        lambda c, t: captured.append((c.bot_token, c.chat_id)))
+    transcript = _write_transcript(tmp_path, [])
+    payload = {"session_id": "r4", "transcript_path": transcript, "cwd": "/somewhere/else"}
+    assert hooks.run("permission_request", json.dumps(payload)) == 0
+    assert captured == [("123:secret", "999")]

@@ -101,3 +101,21 @@ def test_path_helpers(tmp_path):
     assert cfg.state_path(tmp_path, "sess1").name == "sess1.state.json"
     assert cfg.marker_path(tmp_path, "sess1").name == "sess1.marker"
     assert cfg.debug_log_path(tmp_path).name == "debug.log"
+
+
+def test_load_parses_routes(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+        "ROUTE_1_DIR=/home/me/work\nROUTE_1_CHAT_ID=111\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert len(c.routes) == 1
+    assert c.routes[0].chat_id == "111"
+
+
+def test_load_no_routes_gives_empty_list(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.routes == []
