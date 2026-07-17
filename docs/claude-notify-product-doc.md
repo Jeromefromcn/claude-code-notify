@@ -156,7 +156,11 @@ NOTIFY_DEBUG=false                           # set true to enable debug.log for 
 
 File is created `chmod 600`. Because config is separate from code, upgrades replace only code files and never risk touching the user's token. (When project-level install lands, a project `config.env` will override the global one — see §11.)
 
-#### 5.3.2 Directory routing (v0.3.0)
+### 5.3.1 Debug logging
+
+Off by default (`NOTIFY_DEBUG=false`) — zero log writes, zero overhead. When set to `true`, `hooks.py` appends timestamped lines to `~/.claude/claude-code-notify/debug.log` (`chmod 600`) for each hook invocation: event name, parsed payload summary, computed `pending` count, rate-limit decision, and any caught exception. This is the primary troubleshooting path when a user reports a missing or wrongly-timed notification — ask them to set `NOTIFY_DEBUG=true`, reproduce, and share the log. Log content is scrubbed of secrets identically to error output (§9).
+
+### 5.3.2 Directory routing (v0.3.0)
 
 Optional `ROUTE_<n>_*` keys route notifications to different destinations by
 the session's `cwd`:
@@ -173,10 +177,6 @@ Resolution is longest directory-prefix match over the realpath-normalized
 overrides a shallower one, and a muted subtree sends nothing. Any `cwd`
 matching no route uses the global `TELEGRAM_CHAT_ID`. Inspect resolution with
 `python3 -m claude_code_notify --check-route [dir]`.
-
-### 5.3.1 Debug logging
-
-Off by default (`NOTIFY_DEBUG=false`) — zero log writes, zero overhead. When set to `true`, `hooks.py` appends timestamped lines to `~/.claude/claude-code-notify/debug.log` (`chmod 600`) for each hook invocation: event name, parsed payload summary, computed `pending` count, rate-limit decision, and any caught exception. This is the primary troubleshooting path when a user reports a missing or wrongly-timed notification — ask them to set `NOTIFY_DEBUG=true`, reproduce, and share the log. Log content is scrubbed of secrets identically to error output (§9).
 
 ### 5.4 Hook integration with settings.json
 
