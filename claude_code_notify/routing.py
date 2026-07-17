@@ -56,3 +56,45 @@ def parse_routes(merged):
         )
         by_dir[route.dir] = route
     return list(by_dir.values())
+
+
+@dataclass
+class Resolution:
+    muted: bool
+    bot_token: Optional[str]
+    chat_id: Optional[str]
+    matched_dir: Optional[str]
+
+
+def _matches(cwd, route_dir):
+    if cwd == route_dir:
+        return True
+    if route_dir == os.sep:  # a route at the filesystem root matches everything
+        return True
+    return cwd.startswith(route_dir + os.sep)
+
+
+def resolve(cwd, routes, default_bot_token, default_chat_id):
+    """Resolve cwd to a Resolution via longest-prefix match. Never raises."""
+    default = Resolution(muted=False, bot_token=default_bot_token,
+                         chat_id=default_chat_id, matched_dir=None)
+    if not cwd:
+        return default
+    try:
+        norm_cwd = _norm(cwd)
+        best = None
+        for route in routes:
+            if _matches(norm_cwd, route.dir) and (
+                best is None or len(route.dir) > len(best.dir)
+            ):
+                best = route
+        if best is None:
+            return default
+        if best.mute:
+            return Resolution(muted=True, bot_token=None, chat_id=None,
+                              matched_dir=best.dir)
+        return Resolution(muted=False,
+                          bot_token=best.bot_token or default_bot_token,
+                          chat_id=best.chat_id, matched_dir=best.dir)
+    except Exception:
+        return default  # never break the hook
