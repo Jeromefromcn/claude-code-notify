@@ -33,10 +33,12 @@ def test_check_route_bot_override(tmp_path, monkeypatch, capsys):
 def test_check_route_muted(tmp_path, monkeypatch, capsys):
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    _write_cfg(tmp_path, f"ROUTE_1_DIR={scratch}\nROUTE_1_MUTE=true\n")
+    _write_cfg(tmp_path, f"ROUTE_1_DIR={scratch}\nROUTE_1_MUTE=true\nROUTE_1_BOT_TOKEN=muted_token_xyz\n")
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
     assert m.main(["prog", "--check-route", str(scratch)]) == 0
-    assert "MUTED" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "MUTED" in out
+    assert "muted_token_xyz" not in out
 
 
 def test_check_route_no_match_uses_global(tmp_path, monkeypatch, capsys):
@@ -51,3 +53,5 @@ def test_check_route_no_match_uses_global(tmp_path, monkeypatch, capsys):
 def test_check_route_config_error_returns_1(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))  # no config.env
     assert m.main(["prog", "--check-route", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "config error" in out
