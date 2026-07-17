@@ -122,6 +122,7 @@ class Resolution:
     muted: bool
     bot_token: Optional[str]   # set when not muted
     chat_id: Optional[str]     # set when not muted
+    matched_dir: Optional[str] # winning route dir; None on no-match (diagnostics only)
 
 def resolve(cwd, routes, default_bot_token, default_chat_id):
     """Returns a Resolution. Never raises."""
@@ -146,6 +147,10 @@ Steps:
    default_bot_token, chat_id=route.chat_id)`.
 6. No match → global default destination
    (`bot_token=default_bot_token, chat_id=default_chat_id`).
+
+In every case `matched_dir` carries the winning route's `dir`, or `None` when
+no route matched. It exists only for the `--check-route` diagnostic; `hooks.py`
+ignores it.
 
 Mute and send routes share the exact same longest-prefix logic, so a muted
 parent with a deeper normal child (or vice versa) resolves correctly by
@@ -188,8 +193,8 @@ never raise out of `parse_routes` / `resolve`.
 |---|---|
 | `routing.py` (new) | `Route`, `Resolution`, `parse_routes`, `resolve` |
 | `config.py` | `Config` gains a `routes` field (`field(default_factory=list)`, bare-`list` annotation for the 3.8 floor); `load()` calls `parse_routes(merged)` |
-| `hooks.py` | Each handler resolves the destination from `cwd`; muted → `_debug` + return; otherwise send to the resolved destination |
-| `notifier.py` | `send` accepts an explicit destination; scrubs errors with the **token actually used** |
+| `hooks.py` | Each handler resolves the destination from `cwd`; muted → `_debug` + return; otherwise send via a routed `Config` built with `dataclasses.replace` |
+| `notifier.py` | **Unchanged** — see below |
 | `__main__.py` | Optional `--check-route [dir]` diagnostic |
 
 ### `config.py`
@@ -217,31 +222,32 @@ For `handle_stop`, resolving and the mute short-circuit happen **before** the
 pending/rate-limit work: a muted subtree never notifies, so there is no
 reason to compute pending or touch the rate-limit marker. (Consequence: a
 muted session's incremental state offset does not advance; harmless, since it
-never notifies.) The final send passes the resolved destination:
+never notifies.) The final send targets a routed copy of the config:
 
 ```python
-notifier.send(config, message, bot_token=res.bot_token, chat_id=res.chat_id)
+dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+notifier.send(dest, message)
 ```
 
 Debug lines may log the resolved `chat_id` and mute decision but **never** a
 bot token (global or per-route).
 
-### `notifier.py`
+### `notifier.py` (unchanged)
 
-```python
-def send(config, text, bot_token=None, chat_id=None):
-    bot_token = bot_token or config.bot_token
-    chat_id = chat_id or config.chat_id
-    ...
-    error_message = scrub(str(exc), bot_token)   # scrub the token in use
-```
+`notifier.send(config, text)` keeps its existing contract: it sends to
+`config.bot_token` / `config.chat_id` and, on error, scrubs `str(exc)` with
+`config.bot_token`. Because `hooks.py` hands it a `Config` whose
+`bot_token`/`chat_id` are already the resolved destination, the token that
+appears in the request URL is exactly the token `send` scrubs with — so the
+§9 secret-scrubbing guarantee extends to per-route tokens **for free**, with
+no signature change and no churn to the existing `send(config, text)` call
+sites or their test doubles.
 
-The signature stays backward-compatible (existing `send(config, text)` calls
-keep working via the `None` defaults). **Security-critical:** the error path
-must scrub the `bot_token` actually used for the request, not
-`config.bot_token`, because a per-route token appears in the request URL and
-would otherwise leak in an error string. This keeps the §9 "secret scrubbing"
-guarantee intact for per-route tokens.
+This is why routing is threaded as a replaced `Config` rather than as extra
+`send` parameters: the existing suite stubs `notifier.send` as a two-arg
+callable in ~15 places, and keeping the two-arg contract leaves every one of
+those (and their message assertions) passing untouched — an unrouted `cwd`
+resolves to the global default, so `dest` carries the same values as today.
 
 ### `--check-route` diagnostic (optional but recommended)
 
@@ -249,8 +255,9 @@ guarantee intact for per-route tokens.
 directory) loads config, resolves the directory, and prints: the winning
 route dir (or "no match → global default"), the resulting `chat_id`, whether
 the bot is the global one or a per-route override, and whether it is muted.
-It never prints a full bot token (masked to `***`). This is the primary way a
-user answers "why didn't I get a notification in this directory."
+It never prints any bot token — only whether the bot is the global default or
+a per-route override. This is the primary way a user answers "why didn't I get
+a notification in this directory."
 
 ## Backward compatibility & versioning
 
@@ -285,11 +292,15 @@ session (routes injected via config, `cwd` injected via payload dicts).
     normalization; empty/missing `cwd` → global default.
 - `test_config.py`: routes load into `Config`; backward-compat (no routes)
   unchanged.
-- `test_hooks.py`: matching route → `notifier.send` receives the routed
-  `chat_id`/`bot_token`; muted route → `notifier.send` is **not** called;
-  no route → global default used. Use a fake/captured notifier.
-- `test_notifier.py`: `send` with an explicit destination hits the right
-  bot/chat; an error involving a per-route token is scrubbed.
+- `test_hooks.py`: matching route → the `Config` handed to `notifier.send`
+  carries the routed `chat_id`/`bot_token`; muted route → `notifier.send` is
+  **not** called; no route → global default used. Stub `notifier.send` as
+  `lambda c, t: captured.append((c.chat_id, c.bot_token, t))` to inspect the
+  routed config. Existing two-arg doubles stay valid.
+- `test_notifier.py`: unchanged — `notifier.send` keeps its signature, and
+  its existing "sends to the config's bot/chat" and "error scrubs
+  `config.bot_token`" tests already cover the routed-config path, since
+  routing only swaps those two fields.
 
 ## Docs to update (implementation step)
 
