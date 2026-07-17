@@ -1,6 +1,8 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import routing
 
 
 class ConfigError(Exception):
@@ -15,6 +17,7 @@ class Config:
     api_base: str
     debug: bool
     base_dir: Path
+    routes: list = field(default_factory=list)
 
 
 def default_base_dir(environ=None):
@@ -100,4 +103,5 @@ def load(environ=None, base=None):
         api_base=merged.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/"),
         debug=_truthy(merged.get("NOTIFY_DEBUG", "false")),
         base_dir=base,
+        routes=routing.parse_routes(merged),
     )
