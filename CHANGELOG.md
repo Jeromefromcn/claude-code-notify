@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-07-17
+
+### Added
+- Directory-based notification routing. `config.env` can now map directories
+  to Telegram destinations with `ROUTE_<n>_DIR` / `ROUTE_<n>_CHAT_ID` (plus an
+  optional `ROUTE_<n>_BOT_TOKEN` override and `ROUTE_<n>_MUTE=true`). A
+  session's working directory is matched by longest directory prefix: a
+  configured directory covers its whole subtree, a deeper directory overrides
+  a shallower one, and a muted subtree sends nothing. Directories that match
+  no route fall back to the global `TELEGRAM_CHAT_ID`, so existing setups are
+  unaffected.
+- `python3 -m claude_code_notify --check-route [dir]` prints how a directory
+  resolves (winning route, chat id, global vs per-route bot, muted) without
+  printing any bot token.
+
 ## [0.2.1] - 2026-07-11
 
 ### Fixed

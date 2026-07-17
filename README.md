@@ -65,6 +65,35 @@ TELEGRAM_API_BASE=https://api.telegram.org
 NOTIFY_DEBUG=false
 ```
 
+### Directory routing
+
+Send notifications from different directories to different Telegram chats (and
+optionally different bots) by adding indexed `ROUTE_<n>_*` keys to
+`config.env`:
+
+```env
+# clientA and everything under it -> chat 111
+ROUTE_1_DIR=/home/me/work/clientA
+ROUTE_1_CHAT_ID=111
+
+# a subtree can use a different bot entirely
+ROUTE_2_DIR=/home/me/work/clientB
+ROUTE_2_CHAT_ID=222
+ROUTE_2_BOT_TOKEN=987654:XYZ
+
+# mute a subtree — no notifications at all
+ROUTE_3_DIR=/home/me/scratch
+ROUTE_3_MUTE=true
+```
+
+A directory covers its whole subtree; the deepest matching directory wins; a
+directory matching no route falls back to `TELEGRAM_CHAT_ID`. Check how a path
+resolves with:
+
+```bash
+python3 -m claude_code_notify --check-route /home/me/work/clientA/sub
+```
+
 ## Uninstall
 
 ```bash
