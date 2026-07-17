@@ -117,9 +117,12 @@ def test_resolve_no_match_uses_global():
 
 def test_resolve_muted_subtree():
     res = routing.resolve("/home/me/scratch/x",
-                          [_mk("/home/me/scratch", mute=True)], "G:tok", "999")
+                          [_mk("/home/me/scratch", chat_id="888", bot_token="M:tok", mute=True)], "G:tok", "999")
     assert res.muted is True
     assert res.matched_dir == os.path.realpath("/home/me/scratch")
+    # Verify that muted routes discard their own chat_id/bot_token, not fall back to route's values
+    assert res.chat_id is None
+    assert res.bot_token is None
 
 
 def test_resolve_muted_parent_normal_deeper_child():
