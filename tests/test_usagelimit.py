@@ -1,4 +1,5 @@
 import json
+import os
 
 from claude_code_notify import usagelimit
 
@@ -67,3 +68,34 @@ def test_window_key_stable_and_distinct():
     c = usagelimit.window_key("resets 10pm (Asia/Hong_Kong)")
     assert a == b and a != c
     assert len(a) == 16
+
+
+def test_claim_is_single_winner(tmp_path):
+    assert usagelimit.claim_hit(str(tmp_path), "w1") is True
+    assert usagelimit.claim_hit(str(tmp_path), "w1") is False
+    marker = os.path.join(usagelimit.usage_state_dir(str(tmp_path)), "w1.hit")
+    assert os.path.exists(marker)
+
+
+def test_claim_generic_names(tmp_path):
+    assert usagelimit.claim(str(tmp_path), "w1.sleeper") is True
+    assert usagelimit.claim(str(tmp_path), "w1.sleeper") is False
+
+
+def test_gc_removes_old_files_keeps_fresh(tmp_path):
+    d = usagelimit.usage_state_dir(str(tmp_path))
+    os.makedirs(d, exist_ok=True)
+    old = os.path.join(d, "old.hit")
+    fresh = os.path.join(d, "fresh.hit")
+    open(old, "w").close()
+    open(fresh, "w").close()
+    now = 1_000_000_000.0
+    os.utime(old, (now - 40 * 86400, now - 40 * 86400))
+    os.utime(fresh, (now - 1 * 86400, now - 1 * 86400))
+    usagelimit.gc(str(tmp_path), now)
+    assert not os.path.exists(old)
+    assert os.path.exists(fresh)
+
+
+def test_cap_is_at_least_one_week():
+    assert usagelimit.CAP_SECONDS >= 7 * 24 * 3600

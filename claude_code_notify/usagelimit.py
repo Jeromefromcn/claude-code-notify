@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 
 
 def _message_text(envelope):
@@ -47,3 +48,47 @@ def latest_usage_limit(path):
 def window_key(reset_text):
     """Opaque, filesystem-safe dedup key for one reset window."""
     return hashlib.sha1((reset_text or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+CAP_SECONDS = 8 * 24 * 3600
+
+
+def usage_state_dir(base_dir):
+    """Return the directory path for state files."""
+    return os.path.join(str(base_dir), "state", "usage_limit")
+
+
+def claim(base_dir, filename):
+    """Atomically create a marker; True only for the creating caller. Never raises."""
+    directory = usage_state_dir(base_dir)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd = os.open(os.path.join(directory, filename),
+                     os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+
+
+def claim_hit(base_dir, key):
+    """Atomically claim a hit marker for a given key. True only for the creating caller."""
+    return claim(base_dir, key + ".hit")
+
+
+def gc(base_dir, now, max_age_seconds=30 * 24 * 3600):
+    """Best-effort removal of stale window markers. Never raises."""
+    directory = usage_state_dir(base_dir)
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(directory, name)
+        try:
+            if now - os.path.getmtime(path) > max_age_seconds:
+                os.remove(path)
+        except OSError:
+            pass
