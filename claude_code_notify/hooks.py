@@ -5,10 +5,13 @@ import sys
 import time
 from datetime import datetime
 
+from . import broadcast
 from . import config as cfg
 from . import notifier
 from . import ratelimit
+from . import recovery
 from . import routing
+from . import usagelimit
 from .pending_tracker import compute_pending
 from .transcript_parser import latest_ai_title, turn_start_timestamp
 
@@ -65,7 +68,36 @@ def _debug(config, line):
         pass  # debug logging must never itself break the hook
 
 
+def _maybe_handle_usage_limit(payload, config):
+    """If this turn ended in a usage limit, broadcast to all destinations
+    (once per window), optionally schedule the reset ping, and return True so
+    the caller skips its normal notification. Never raises out."""
+    if not config.usage_limit:
+        return False
+    transcript = payload.get("transcript_path", "")
+    reset_text = usagelimit.latest_usage_limit(transcript)
+    if reset_text is None:
+        return False
+    cwd = payload.get("cwd", "")
+    key = usagelimit.window_key(reset_text)
+    usagelimit.gc(config.base_dir, _now())
+    if usagelimit.claim_hit(config.base_dir, key):
+        message = notifier.build_message("usage-limit", cwd, _when(), title=reset_text)
+        count = broadcast.send_all(config, message)
+        _debug(config, f"usage-limit hit broadcast to {count} destination(s)")
+        if config.usage_limit_reset:
+            target = usagelimit.parse_reset(reset_text, _now())
+            if target is not None:
+                recovery.spawn(config.base_dir, key, target)
+                _debug(config, f"usage-limit reset scheduled at {int(target)}")
+            else:
+                _debug(config, "usage-limit reset time unparsed — no reset ping")
+    return True
+
+
 def handle_stop(payload, config):
+    if _maybe_handle_usage_limit(payload, config):
+        return
     session_id = payload.get("session_id", "")
     transcript = payload.get("transcript_path", "")
     cwd = payload.get("cwd", "")
@@ -90,6 +122,8 @@ def handle_stop(payload, config):
 
 
 def handle_stop_failure(payload, config):
+    if _maybe_handle_usage_limit(payload, config):
+        return
     cwd = payload.get("cwd", "")
     res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
     if res.muted:

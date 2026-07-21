@@ -304,3 +304,84 @@ def test_permission_request_unmatched_cwd_uses_global(tmp_path, monkeypatch):
     payload = {"session_id": "r4", "transcript_path": transcript, "cwd": "/somewhere/else"}
     assert hooks.run("permission_request", json.dumps(payload)) == 0
     assert captured == [("123:secret", "999")]
+
+
+def _rate_limit_line(text="You've hit your session limit · resets 9pm (Asia/Hong_Kong)"):
+    return json.dumps({
+        "type": "assistant", "isSidechain": False, "isApiErrorMessage": True,
+        "error": "rate_limit", "apiErrorStatus": 429,
+        "message": {"model": "<synthetic>",
+                    "content": [{"type": "text", "text": text}]}})
+
+
+def _usage_config(tmp_path, extra=""):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\n"
+        "TELEGRAM_API_BASE=http://127.0.0.1:1\nNOTIFY_USAGE_LIMIT=true\n" + extra)
+
+
+def test_usage_limit_feature_off_by_default(base, tmp_path, monkeypatch):
+    # base fixture sets no NOTIFY_USAGE_LIMIT -> feature inert; normal path runs.
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u0", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "usage limit" not in sent[0]
+
+
+def test_usage_limit_broadcasts_all_and_suppresses_finished(tmp_path, monkeypatch):
+    _usage_config(tmp_path,
+                  "NOTIFY_USAGE_LIMIT_RESET=false\n"    # keep the test process-free
+                  "ROUTE_1_DIR=/proj/acme\nROUTE_1_CHAT_ID=111\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append((c.chat_id, t)))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u1", "transcript_path": transcript, "cwd": "/proj/acme/x"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert sorted(chat for chat, _ in sent) == ["111", "999"]
+    assert all("Claude Code usage limit reached" in t for _, t in sent)
+    assert all("finished" not in t for _, t in sent)
+
+
+def test_usage_limit_same_window_does_not_resend(tmp_path, monkeypatch):
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u2", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert hooks.run("stop", json.dumps(payload)) == 0   # same window
+    assert len(sent) == 1                                # no second broadcast
+    assert all("finished" not in t for t in sent)        # still suppressed
+
+
+def test_usage_limit_schedules_reset_when_enabled(tmp_path, monkeypatch):
+    _usage_config(tmp_path)   # NOTIFY_USAGE_LIMIT_RESET defaults true
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    spawned = []
+    monkeypatch.setattr(hooks.recovery, "spawn",
+                        lambda base, window, target: spawned.append((window, target)))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u3", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(spawned) == 1
+    assert spawned[0][1] is not None   # a parseable target epoch
+
+
+def test_usage_limit_reset_disabled_does_not_spawn(tmp_path, monkeypatch):
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    spawned = []
+    monkeypatch.setattr(hooks.recovery, "spawn",
+                        lambda base, window, target: spawned.append(window))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u4", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert spawned == []
