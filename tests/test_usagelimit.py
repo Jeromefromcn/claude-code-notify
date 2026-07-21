@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import stat
@@ -105,3 +106,43 @@ def test_gc_removes_old_files_keeps_fresh(tmp_path):
 
 def test_cap_is_at_least_one_week():
     assert usagelimit.CAP_SECONDS >= 7 * 24 * 3600
+
+
+def test_parse_reset_returns_next_local_occurrence():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()  # 10:00 local
+    got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
+    assert got is not None
+    dt = datetime.datetime.fromtimestamp(got)
+    assert (dt.hour, dt.minute) == (21, 0)
+    assert now < got <= now + 24 * 3600
+
+
+def test_parse_reset_rolls_to_tomorrow_when_past():
+    now = datetime.datetime(2026, 7, 21, 23, 30, 0).timestamp()  # 23:30 local
+    got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
+    assert got is not None
+    dt = datetime.datetime.fromtimestamp(got)
+    assert (dt.hour, dt.minute) == (21, 0)
+    assert dt.date() == datetime.date(2026, 7, 22)  # next day
+
+
+def test_parse_reset_handles_minutes_and_am():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    got = usagelimit.parse_reset("resets 7:50am", now)
+    dt = datetime.datetime.fromtimestamp(got)
+    assert (dt.hour, dt.minute) == (7, 50)
+
+
+def test_parse_reset_weekly_style_text_is_unparsed():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    assert usagelimit.parse_reset("You've hit your weekly limit · resets Monday", now) is None
+
+
+def test_parse_reset_invalid_hour_is_none():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    assert usagelimit.parse_reset("resets 13pm", now) is None
+
+
+def test_parse_reset_no_match_is_none():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    assert usagelimit.parse_reset("nothing useful here", now) is None

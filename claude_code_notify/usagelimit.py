@@ -1,6 +1,8 @@
+import datetime
 import hashlib
 import json
 import os
+import re
 
 
 def _message_text(envelope):
@@ -51,6 +53,36 @@ def window_key(reset_text):
 
 
 CAP_SECONDS = 8 * 24 * 3600
+
+
+_RESET_RE = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
+
+
+def parse_reset(reset_text, now):
+    """Best-effort next-occurrence epoch of the reported local wall-clock reset
+    time. Returns None on any unparseable text or out-of-range result. Only the
+    known session format (h[:mm]am/pm) is handled; weekly formats return None."""
+    match = _RESET_RE.search(reset_text or "")
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if not (1 <= hour <= 12) or not (0 <= minute <= 59):
+        return None
+    hour = hour % 12
+    if match.group(3).lower() == "pm":
+        hour += 12
+    try:
+        base = datetime.datetime.fromtimestamp(now)
+        target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        epoch = target.timestamp()
+        if epoch <= now:
+            epoch = (target + datetime.timedelta(days=1)).timestamp()
+    except (OverflowError, OSError, ValueError):
+        return None
+    if epoch <= now or epoch > now + CAP_SECONDS:
+        return None
+    return epoch
 
 
 def usage_state_dir(base_dir):
