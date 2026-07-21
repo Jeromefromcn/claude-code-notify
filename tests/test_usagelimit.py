@@ -146,3 +146,22 @@ def test_parse_reset_invalid_hour_is_none():
 def test_parse_reset_no_match_is_none():
     now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
     assert usagelimit.parse_reset("nothing useful here", now) is None
+
+
+def test_parse_reset_handles_noon_and_midnight():
+    # Test noon (12pm): hour=12, 12%12=0, +12=12 (correct)
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()  # 10:00am, before noon
+    noon = usagelimit.parse_reset("resets 12pm", now)
+    assert noon is not None
+    dt_noon = datetime.datetime.fromtimestamp(noon)
+    assert dt_noon.hour == 12
+    assert dt_noon.date() == datetime.date(2026, 7, 21)
+
+    # Test midnight (12am): hour=12, 12%12=0 (correct, no +12 for am)
+    # Use now after 12am so it rolls to next day's midnight
+    now_after_midnight = datetime.datetime(2026, 7, 21, 1, 0, 0).timestamp()  # 1:00am
+    midnight = usagelimit.parse_reset("resets 12am", now_after_midnight)
+    assert midnight is not None
+    dt_midnight = datetime.datetime.fromtimestamp(midnight)
+    assert dt_midnight.hour == 0
+    assert dt_midnight.date() == datetime.date(2026, 7, 22)  # next day
