@@ -948,10 +948,6 @@ def _wait(target, now_fn, sleep_fn, is_done):
         sleep_fn(min(target - now, 60))
 
 
-def _when():
-    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-
 def fire(base_dir, window, when_str, load=None, send=None):
     """Broadcast the reset message exactly once per window (guarded by a .done
     claim). Never raises."""
@@ -1010,7 +1006,7 @@ def main(argv):
             pass
         _wait(target_epoch, time.time, time.sleep, lambda: os.path.exists(done_path))
         if time.time() >= target_epoch:
-            fire(base_dir, window, _when())
+            fire(base_dir, window, datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
     except Exception:
         pass
     finally:
