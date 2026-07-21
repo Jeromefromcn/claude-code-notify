@@ -52,6 +52,19 @@ def test_build_message_omits_absent_duration():
     assert msg == "Claude Code finished | My Task | /home/x | 09/07/2026 10:00:00"
 
 
+def test_build_message_usage_limit():
+    assert notifier.build_message(
+        "usage-limit", "/w", "WHEN",
+        title="You've hit your session limit · resets 9pm") == (
+        "Claude Code usage limit reached | "
+        "You've hit your session limit · resets 9pm | /w | WHEN")
+
+
+def test_build_message_usage_limit_reset_omits_empty_cwd():
+    assert notifier.build_message("usage-limit-reset", "", "WHEN") == (
+        "Claude Code usage limit reset | WHEN")
+
+
 class _Capture(BaseHTTPRequestHandler):
     received = {}
 

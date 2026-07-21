@@ -11,6 +11,8 @@ _HEADS = {
     "finished": "Claude Code finished",
     "error": "Claude Code stopped with error",
     "needs-input": "Claude Code needs your input",
+    "usage-limit": "Claude Code usage limit reached",
+    "usage-limit-reset": "Claude Code usage limit reset",
 }
 
 
@@ -26,7 +28,8 @@ def build_message(kind, cwd, when, title=None, duration=None):
         parts.append(duration)
     if title:
         parts.append(title)
-    parts.append(cwd)
+    if cwd:
+        parts.append(cwd)
     parts.append(when)
     return " | ".join(parts)
 
