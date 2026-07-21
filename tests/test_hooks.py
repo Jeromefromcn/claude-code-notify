@@ -385,3 +385,61 @@ def test_usage_limit_reset_disabled_does_not_spawn(tmp_path, monkeypatch):
     payload = {"session_id": "u4", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
     assert spawned == []
+
+
+def test_usage_limit_enabled_normal_finish_sends_normally(tmp_path, monkeypatch):
+    # Feature ON, but this turn's last assistant message is a normal reply, not
+    # a rate limit -> _maybe_handle_usage_limit must return False and the
+    # normal "finished" path must run untouched: no broadcast, no reset spawn.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    broadcasts = []
+    monkeypatch.setattr(hooks.broadcast, "send_all",
+                        lambda c, t: broadcasts.append(t) or 0)
+    spawned = []
+    monkeypatch.setattr(hooks.recovery, "spawn",
+                        lambda base, window, target: spawned.append(window))
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,'
+        '"message":{"content":[{"type":"text","text":"All done, tests pass."}]}}',
+    ])
+    payload = {"session_id": "u5", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code finished")
+    assert broadcasts == []
+    assert spawned == []
+
+
+def test_usage_limit_stop_failure_broadcasts_and_suppresses_error(tmp_path, monkeypatch):
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u6", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "Claude Code usage limit reached" in sent[0]
+    assert "stopped with error" not in sent[0]
+
+
+def test_usage_limit_stop_then_stop_failure_same_window_suppresses_without_resend(
+    tmp_path, monkeypatch
+):
+    # Cross-handler case named in the design doc: Stop broadcasts first; a
+    # later StopFailure for the *same* window must not re-broadcast, but must
+    # still suppress its own normal "stopped with error" notification.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "u7", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(sent) == 1                                  # Stop's broadcast
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1                                  # no second broadcast
+    assert all("finished" not in t and "stopped with error" not in t for t in sent)
