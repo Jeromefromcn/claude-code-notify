@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 
 from claude_code_notify import usagelimit
 
@@ -75,11 +76,16 @@ def test_claim_is_single_winner(tmp_path):
     assert usagelimit.claim_hit(str(tmp_path), "w1") is False
     marker = os.path.join(usagelimit.usage_state_dir(str(tmp_path)), "w1.hit")
     assert os.path.exists(marker)
+    mode = stat.S_IMODE(os.stat(marker).st_mode)
+    assert mode == 0o600
 
 
 def test_claim_generic_names(tmp_path):
     assert usagelimit.claim(str(tmp_path), "w1.sleeper") is True
     assert usagelimit.claim(str(tmp_path), "w1.sleeper") is False
+    sleeper = os.path.join(usagelimit.usage_state_dir(str(tmp_path)), "w1.sleeper")
+    mode = stat.S_IMODE(os.stat(sleeper).st_mode)
+    assert mode == 0o600
 
 
 def test_gc_removes_old_files_keeps_fresh(tmp_path):
