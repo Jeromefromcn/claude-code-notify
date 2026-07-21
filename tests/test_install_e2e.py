@@ -329,3 +329,19 @@ def test_install_with_corrupt_settings_fails_cleanly(tmp_path):
     assert "Traceback" not in result.stderr
     assert "not valid JSON" in result.stderr
     assert settings.read_text() == "not json{"
+
+
+def test_uninstall_kills_live_sleeper(tmp_path):
+    import sys
+    import time
+    result, base, settings = _run(tmp_path, "--non-interactive")
+    assert result.returncode == 0, result.stderr
+    # A live sleeper recorded under the usage-limit state dir.
+    state = base / "state" / "usage_limit"
+    state.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    (state / "w1.pid").write_text(str(proc.pid))
+    result, base, settings = _run(tmp_path, "--uninstall")
+    assert result.returncode == 0, result.stderr
+    assert proc.wait(timeout=10) is not None       # sleeper was terminated
+    assert not (base / "state").exists()           # state removed

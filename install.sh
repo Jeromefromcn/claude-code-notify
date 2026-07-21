@@ -29,6 +29,7 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; 
 
 if [ "$MODE" = "uninstall" ]; then
   python3 "$BASE_DIR/claude_code_notify/installer.py" remove "$SETTINGS"
+  PYTHONPATH="$BASE_DIR" python3 -m claude_code_notify.recovery --kill-all --base-dir "$BASE_DIR" 2>/dev/null || true
   rm -rf "$BASE_DIR/claude_code_notify" "$BASE_DIR/hooks" "$BASE_DIR/state" "$BASE_DIR/debug.log"
   echo "Removed hook entries, code, state, and debug log. config.env kept at $BASE_DIR/config.env (delete manually if desired)."
   exit 0
