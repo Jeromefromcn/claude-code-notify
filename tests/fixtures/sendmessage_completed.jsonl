@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_sm2","name":"SendMessage","input":{"to":"researcher","message":"keep going"}}]}}
+{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>t2</task-id>\n<tool-use-id>toolu_sm2</tool-use-id>\n<status>completed</status>\n</task-notification>"}

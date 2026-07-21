@@ -20,7 +20,7 @@ Claude Code exposes `Stop`, `StopFailure`, and `PermissionRequest` hooks that ca
 `claude-code-notify` extracts this capability into a standalone, open-source, versioned tool that:
 
 - Sends a Telegram message **only** when a turn genuinely completes, or when Claude needs input, or errors out.
-- Correctly waits for background tasks (both `Agent` subagents and background `Bash` commands) before declaring completion.
+- Correctly waits for background tasks (`Agent` subagents, background `Bash` commands, and agents resumed via `SendMessage`) before declaring completion.
 - Installs in one command with minimal configuration (bot token + chat id).
 - Evolves by semantic version, so `install latest` upgrades notification accuracy over time.
 - Has a test suite that runs fully decoupled from Claude Code (no live session, no real Telegram required).
@@ -69,24 +69,28 @@ This is the heart of the tool. It answers one question at Stop time: **are there
 |---|---|---|---|
 | `Agent` | `run_in_background != false` (i.e. `true` **or absent** — Agent defaults to background) | No | `<task-notification>` with matching `<tool-use-id>` |
 | `Bash` | `run_in_background == true` (Bash defaults to foreground) | **Yes** (`"Command running in background with ID: …"`) | `<task-notification>` with matching `<tool-use-id>` |
+| `SendMessage` | Always — it resumes a previously-spawned agent from its own transcript; there is no `run_in_background` flag to check | **Yes** (a delivery/queued ack) | `<task-notification>` with matching `<tool-use-id>` |
 
 Foreground/synchronous calls always resolve *within* the turn, so they are never pending at Stop time and do not need tracking.
+
+Each `SendMessage` call gets its **own** `tool_use_id`, distinct from the id of the `Agent` call that originally spawned the resumed agent. Resuming an agent is therefore a **new launch** to track, not a re-open of the original one — see [lessons learned 0001](lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for the incident that surfaced this gap.
 
 ### 4.2 The unified resolution rule
 
 > A background dispatch is **resolved only** by a `<task-notification>` whose `<tool-use-id>` matches the launch. An immediate ack `tool_result` never resolves it.
 
-This single rule is robust for both tools:
+This single rule is robust across all three tools:
 
 - Fixes the background-Bash false positive (the ack no longer counts).
 - Works for background Agent (which has no ack anyway).
-- A `<task-notification>` may fire more than once for the same task (an agent can be resumed). Matching by the stable launch `tool_use_id` makes re-notification idempotent.
+- Works for `SendMessage` (its delivery ack no longer counts either).
+- The same underlying task can produce more than one `<task-notification>` over its lifetime — once when an agent first stops, and again each time it's resumed via `SendMessage` and stops again. Each of those is a **separate launch** (a distinct `tool_use_id`: the original `Agent` call, then one per `SendMessage` resume), each resolved independently by its own matching notification.
 
 `PENDING = launched − resolved`. If `PENDING > 0`, the Stop hook exits silently (do not notify — background work is still running). If `PENDING == 0`, proceed to dedup/rate-limit, then send.
 
 ### 4.3 Transcript signals parsed
 
-- **Launch:** an `assistant` entry with a `tool_use` content block where `name` is `Agent` (background unless `input.run_in_background == false`) or `Bash` with `input.run_in_background == true`. Record its `id`.
+- **Launch:** an `assistant` entry with a `tool_use` content block where `name` is `Agent` (background unless `input.run_in_background == false`), `Bash` with `input.run_in_background == true`, or `SendMessage` (always). Record its `id`.
 - **Completion:** a `<task-notification>` block — appears both as a `queue-operation` entry and as a `user` entry with `origin.kind == "task-notification"` — containing `<tool-use-id>…</tool-use-id>`. Record every matched id as resolved.
 
 Parse at the JSON **envelope** level (entry `type`, `tool_use`/`tool_result` structure), never by substring-matching text. Debug output that happens to print the words "tool_use_id" or "task-notification" inside some Bash result text must not poison the count.
@@ -221,7 +225,7 @@ Re-running the install command is the upgrade path: it fetches the newest releas
 
 Design constraint: the core must be verifiable **without** Claude Code and **without** hitting real Telegram.
 
-- **Fixtures:** hand-crafted JSONL snippets under `tests/fixtures/` covering: purely-foreground turn; background Agent still pending; background Agent completed via task-notification; background Bash with immediate ack but no completion (the regression case); background Bash completed; task-notification firing twice; corrupt/rotated state file.
+- **Fixtures:** hand-crafted JSONL snippets under `tests/fixtures/` covering: purely-foreground turn; background Agent still pending; background Agent completed via task-notification; background Bash with immediate ack but no completion (the regression case); background Bash completed; `SendMessage` still pending; `SendMessage` with immediate ack but no completion (the [lessons-learned 0001](lessons-learned/0001-sendmessage-untracked-background-dispatch.md) regression case); `SendMessage` completed; task-notification firing twice; corrupt/rotated state file.
 - **Unit tests (pytest):** assert `pending_tracker.compute()` returns the right count for each fixture; assert incremental parsing matches full rescan; assert rate-limit window logic; assert secret scrubbing removes the token from error strings.
 - **Notifier tests:** `notifier` sends to `TELEGRAM_API_BASE`; tests point it at a local mock HTTP server (or inject a fake transport) and assert the request payload — no real network.
 - **Installer tests:** run `install.sh` against a temp `$HOME`, assert files land in the right place, `config.env` is `600`, settings.json merge adds exactly the expected hook entries and is idempotent on re-run, and `--uninstall` fully reverts.

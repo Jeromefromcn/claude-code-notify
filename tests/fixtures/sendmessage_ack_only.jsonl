@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_sm3","name":"SendMessage","input":{"to":"researcher","message":"keep going"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_sm3","content":"Message delivered."}]}}

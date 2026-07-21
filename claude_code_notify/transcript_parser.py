@@ -35,6 +35,10 @@ def _launch_ids(envelope):
             yield tool_id
         elif name == "Bash" and run_bg is True:
             yield tool_id
+        # SendMessage resumes a previously-spawned agent from its own
+        # transcript and always runs async — no run_in_background flag exists.
+        elif name == "SendMessage":
+            yield tool_id
 
 
 def _completion_content(envelope):

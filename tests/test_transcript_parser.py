@@ -39,6 +39,26 @@ def test_background_bash_completed():
     assert CompletionEvent("toolu_bg2") in evs
 
 
+def test_sendmessage_launch_detected():
+    # SendMessage resumes a previously-spawned agent asynchronously; it has
+    # no run_in_background flag and is always a background dispatch.
+    assert _events("sendmessage_pending.jsonl") == [LaunchEvent("toolu_sm1")]
+
+
+def test_sendmessage_completed():
+    evs = _events("sendmessage_completed.jsonl")
+    assert LaunchEvent("toolu_sm2") in evs
+    assert CompletionEvent("toolu_sm2") in evs
+
+
+def test_sendmessage_ack_is_not_completion():
+    # The immediate "Message delivered" ack must NOT resolve it — only a
+    # matching <task-notification> does.
+    evs = _events("sendmessage_ack_only.jsonl")
+    assert LaunchEvent("toolu_sm3") in evs
+    assert CompletionEvent("toolu_sm3") not in evs
+
+
 def test_task_notification_both_variants():
     evs = _events("notif_twice.jsonl")
     completions = [e for e in evs if isinstance(e, CompletionEvent)]

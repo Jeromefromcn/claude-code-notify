@@ -18,7 +18,7 @@ Claude Code runs long, multi-step turns and exposes `Stop`, `StopFailure`, and `
 
 - Sends a Telegram message **only** when a turn genuinely finishes, needs your input, or errors out.
 - Shows how long the turn took (e.g. `3m12s`) right in the notification.
-- Correctly waits for background work (both `Agent` subagents and background `Bash`) before declaring completion.
+- Correctly waits for background work (`Agent` subagents, background `Bash`, and agents resumed via `SendMessage`) before declaring completion.
 - Installs with one command; the only runtime dependency is `python3`.
 - Ships fixes and improvements as new versions — `install latest` upgrades notification accuracy.
 - Keeps secrets out of `settings.json` entirely.
@@ -106,7 +106,7 @@ python3 -m claude_code_notify --check-route /home/me/work/clientA/sub
 
 At `Stop` time, the tool answers: *are there background tasks this session launched that haven't finished?*
 
-A background dispatch — `Agent` (background by default), or `Bash` with `run_in_background=true` — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. If any dispatch is still unresolved, the hook stays silent; only once everything has resolved does it check a rate limit and send.
+A background dispatch — `Agent` (background by default), `Bash` with `run_in_background=true`, or `SendMessage` (always async — it has no `run_in_background` flag and resumes a previously-spawned agent from its own transcript) — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. The same fix applies to `SendMessage`'s delivery ack. If any dispatch is still unresolved, the hook stays silent; only once everything has resolved does it check a rate limit and send. See [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for a real false-positive this caused before `SendMessage` was tracked.
 
 Transcripts are parsed incrementally (cached byte offset per session) and at the JSON envelope level — never by substring-matching text, so debug output that happens to contain the words "tool_use_id" can't produce a false signal.
 
