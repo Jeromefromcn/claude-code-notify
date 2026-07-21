@@ -119,3 +119,30 @@ def test_load_no_routes_gives_empty_list(tmp_path):
     )
     c = cfg.load(environ={}, base=tmp_path)
     assert c.routes == []
+
+
+def test_load_usage_limit_defaults(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.usage_limit is False
+    assert c.usage_limit_reset is True
+
+
+def test_load_usage_limit_from_file(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+        "NOTIFY_USAGE_LIMIT=true\nNOTIFY_USAGE_LIMIT_RESET=false\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.usage_limit is True
+    assert c.usage_limit_reset is False
+
+
+def test_env_overrides_usage_limit(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={"NOTIFY_USAGE_LIMIT": "1"}, base=tmp_path)
+    assert c.usage_limit is True

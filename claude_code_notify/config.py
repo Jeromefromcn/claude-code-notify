@@ -18,6 +18,8 @@ class Config:
     debug: bool
     base_dir: Path
     routes: list = field(default_factory=list)
+    usage_limit: bool = False
+    usage_limit_reset: bool = True
 
 
 def default_base_dir(environ=None):
@@ -82,7 +84,8 @@ def load(environ=None, base=None):
     if cfg_file.exists():
         merged.update(parse_env_file(cfg_file.read_text()))
     for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_API_BASE",
-                "NOTIFY_RATELIMIT_SECONDS", "NOTIFY_DEBUG"):
+                "NOTIFY_RATELIMIT_SECONDS", "NOTIFY_DEBUG",
+                "NOTIFY_USAGE_LIMIT", "NOTIFY_USAGE_LIMIT_RESET"):
         if key in environ:
             merged[key] = environ[key]
 
@@ -104,4 +107,6 @@ def load(environ=None, base=None):
         debug=_truthy(merged.get("NOTIFY_DEBUG", "false")),
         base_dir=base,
         routes=routing.parse_routes(merged),
+        usage_limit=_truthy(merged.get("NOTIFY_USAGE_LIMIT", "false")),
+        usage_limit_reset=_truthy(merged.get("NOTIFY_USAGE_LIMIT_RESET", "true")),
     )
