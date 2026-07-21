@@ -186,6 +186,30 @@ matching no route uses the global `TELEGRAM_CHAT_ID`. Inspect resolution with
 
 The installer merges **only** `claude-code-notify`'s own hook entries into the `hooks` block of the target `settings.json`, using Python (`json` module) — never `sed`/string surgery. Which entries are "ours" is tracked by a sidecar state file (`.claude-code-notify-hooks.json`, next to `settings.json`) recording the exact command string written last time, so re-install replaces its own entries idempotently and leaves any other user hooks untouched even if the install path (`base_dir`) changes between runs. A one-time legacy substring match (command path containing `claude-code-notify`) claims pre-existing entries from installs that predate this state file. Uninstall removes exactly those entries. See [ADR 0001](adr/0001-hook-installation-tracking.md).
 
+### 5.5 Usage-limit notifications (v0.4.0)
+
+Opt-in (`NOTIFY_USAGE_LIMIT`, default off). Because a usage limit is
+account-global, notifications **broadcast to every distinct destination**
+(global default plus every route, deduped by `(bot_token, chat_id)`; mute is
+not consulted).
+
+**Detection** is envelope-level only — the transcript's terminal assistant
+entry carrying `isApiErrorMessage == true` and `error == "rate_limit"` (both
+session and weekly limits). No text is matched to detect; the reset text is
+passed through as the message body and used as an opaque per-window dedup key.
+When detected, the misleading normal "finished"/"error" notification is
+suppressed for that turn.
+
+**Reset ping** (`NOTIFY_USAGE_LIMIT_RESET`, default on when the feature is on;
+set false for hit-only, zero background processes). At the reported reset time
+a one-shot "usage limit reset" broadcast is delivered by a transient,
+single-instance, detached background process ("sleeper") spawned from the hook:
+best-effort local-time parse of the reset moment, a wall-clock wait loop capped
+at 8 days, no secrets on its argv, a PID file so uninstall can terminate it, and
+**no fallback** if it is killed (miss-is-a-miss). The weekly-limit reset text
+format is unverified and currently yields no reset ping (the hit broadcast still
+fires). The whole feature consumes zero Claude tokens.
+
 ## 6. Installation & upgrade
 
 ### 6.1 One-command install

@@ -94,6 +94,28 @@ resolves with:
 python3 -m claude_code_notify --check-route /home/me/work/clientA/sub
 ```
 
+### Usage-limit notifications (opt-in)
+
+Off by default. When enabled, a Telegram alert is broadcast to **every**
+distinct configured destination (the global chat plus every `ROUTE_*` chat)
+the moment the account hits a usage limit — because a usage limit is
+account-global. Add to `config.env`:
+
+```env
+NOTIFY_USAGE_LIMIT=true          # enable the feature (default false)
+NOTIFY_USAGE_LIMIT_RESET=true    # also ping when the limit resets (default true);
+                                 # set false to keep only the hit alert and never
+                                 # spawn a background process
+```
+
+Detection is purely structural (the transcript's `rate_limit` error envelope),
+so it never mis-fires on ordinary output. The optional reset ping is delivered
+by a short-lived background process that waits until the reported reset time,
+sends once, and exits (bounded to at most 8 days; killed on uninstall). It is
+best-effort: if the machine is off at reset time the ping is simply missed.
+The whole feature runs locally plus Telegram HTTP and uses **zero Claude
+tokens**.
+
 ## Uninstall
 
 ```bash

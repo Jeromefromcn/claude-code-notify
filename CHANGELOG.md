@@ -14,6 +14,21 @@ All notable changes to this project are documented here. Format follows
   for a tool added after that fix landed. See
   [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md).
 
+## [0.4.0]
+
+### Added
+- Usage-limit notifications (opt-in, off by default). When the account hits a
+  usage limit, broadcast a Telegram alert to every distinct configured
+  destination (global default plus every route), detected purely at the
+  transcript envelope level (`error == "rate_limit"`). Enable with
+  `NOTIFY_USAGE_LIMIT=true`.
+- Optional reset ping: at the reported reset time, a one-shot notification that
+  the limit has reset, delivered by a transient bounded background process.
+  Controlled by `NOTIFY_USAGE_LIMIT_RESET` (default `true`; set `false` to keep
+  only the hit broadcast and never spawn a background process). Best-effort —
+  missed if the machine is off at reset time; weekly-limit reset times are not
+  yet parsed. Uninstall terminates any live sleeper.
+
 ## [0.3.0] - 2026-07-17
 
 ### Added
