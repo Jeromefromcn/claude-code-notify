@@ -11,10 +11,37 @@ from . import notifier
 from . import usagelimit
 
 
+def _debug_config(base_dir):
+    """Best-effort config load for debug logging only. This process only ever
+    receives base_dir on argv, not a loaded Config, so each entry point loads
+    its own — a failure here (e.g. no config.env) must never affect control
+    flow, so it silently yields None, which _debug() already no-ops on."""
+    try:
+        return cfg.load(base=base_dir)
+    except Exception:
+        return None
+
+
+def _debug(config, line):
+    if config is None or not config.debug:
+        return
+    try:
+        path = str(cfg.debug_log_path(config.base_dir))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        scrubbed = notifier.scrub(line, config.bot_token)
+        with open(path, "a") as fh:
+            fh.write(f"{datetime.now().isoformat()} {scrubbed}\n")
+        os.chmod(path, 0o600)
+    except Exception:
+        pass  # debug logging must never itself break the sleeper
+
+
 def spawn(base_dir, window, target_epoch):
     """Launch one detached sleeper for this window. Single-instance via an
     atomic claim. No secrets on argv. Never raises."""
+    config = _debug_config(base_dir)
     if not usagelimit.claim(base_dir, window + ".sleeper"):
+        _debug(config, f"recovery: sleeper already running for window={window} — spawn skipped")
         return
     try:
         env = dict(os.environ)
@@ -27,8 +54,9 @@ def spawn(base_dir, window, target_epoch):
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True, env=env,
         )
+        _debug(config, f"recovery: sleeper spawned window={window} target={int(target_epoch)}")
     except Exception:
-        pass  # a spawn failure must never break the hook
+        _debug(config, f"recovery: spawn failed window={window}")
 
 
 def kill_all(base_dir):
@@ -71,7 +99,8 @@ def fire(base_dir, window, when_str, load=None, send=None):
     except Exception:
         return False
     message = notifier.build_message("usage-limit-reset", "", when_str)
-    broadcast.send_all(config, message, send=send)
+    count = broadcast.send_all(config, message, send=send)
+    _debug(config, f"recovery: reset broadcast to {count} destination(s) window={window}")
     return True
 
 
@@ -105,6 +134,7 @@ def main(argv):
         target_epoch = float(target)
     except ValueError:
         return 0
+    config = _debug_config(base_dir)
     directory = usagelimit.usage_state_dir(base_dir)
     pid_path = os.path.join(directory, window + ".pid")
     done_path = os.path.join(directory, window + ".done")
@@ -116,9 +146,14 @@ def main(argv):
             os.chmod(pid_path, 0o600)
         except OSError:
             pass
+        _debug(config, f"recovery: sleeper started window={window} target={int(target_epoch)} pid={os.getpid()}")
         _wait(target_epoch, time.time, time.sleep, lambda: os.path.exists(done_path))
         if time.time() >= target_epoch:
+            _debug(config, f"recovery: target reached window={window} — firing")
             fire(base_dir, window, datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+        else:
+            reason = "preempted by .done" if os.path.exists(done_path) else "cap exceeded"
+            _debug(config, f"recovery: sleeper exiting without firing window={window} reason={reason}")
     except Exception:
         pass
     finally:

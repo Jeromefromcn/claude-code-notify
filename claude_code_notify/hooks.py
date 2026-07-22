@@ -73,10 +73,12 @@ def _maybe_handle_usage_limit(payload, config):
     (once per window), optionally schedule the reset ping, and return True so
     the caller skips its normal notification. Never raises out."""
     if not config.usage_limit:
+        _debug(config, "usage-limit: feature disabled — skipping detection")
         return False
     transcript = payload.get("transcript_path", "")
     reset_text = usagelimit.latest_usage_limit(transcript)
     if reset_text is None:
+        _debug(config, f"usage-limit: no rate-limit as last transcript entry (transcript={transcript})")
         return False
     cwd = payload.get("cwd", "")
     now = _now()
@@ -93,6 +95,8 @@ def _maybe_handle_usage_limit(payload, config):
                 _debug(config, f"usage-limit reset scheduled at {int(target)}")
             else:
                 _debug(config, "usage-limit reset time unparsed — no reset ping")
+    else:
+        _debug(config, f"usage-limit: hit detected (key={key}) but window already claimed — suppressing duplicate")
     return True
 
 

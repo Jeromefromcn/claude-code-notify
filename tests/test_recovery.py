@@ -155,3 +155,75 @@ def test_main_removes_pid_file_even_if_fire_raises(tmp_path, monkeypatch):
     assert rc == 0  # main() never propagates
     assert not os.path.exists(
         os.path.join(usagelimit.usage_state_dir(str(tmp_path)), "w1.pid"))
+
+
+def _write_debug_config(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\nNOTIFY_DEBUG=true\n")
+
+
+def test_spawn_debug_logs_spawned_then_skipped(tmp_path, monkeypatch):
+    _write_debug_config(tmp_path)
+    monkeypatch.setattr(recovery.subprocess, "Popen", lambda argv, **kwargs: None)
+    recovery.spawn(str(tmp_path), "w1", 1_800_000_000)
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: sleeper spawned window=w1 target=1800000000" in log
+    assert "123:secret" not in log
+
+    recovery.spawn(str(tmp_path), "w1", 1_800_000_000)  # same window -> blocked
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: sleeper already running for window=w1 — spawn skipped" in log
+
+
+def test_spawn_debug_logs_launch_failure(tmp_path, monkeypatch):
+    _write_debug_config(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise OSError("no such file or directory")
+
+    monkeypatch.setattr(recovery.subprocess, "Popen", boom)
+    recovery.spawn(str(tmp_path), "w1", 1_800_000_000)
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: spawn failed window=w1" in log
+
+
+def test_fire_debug_logs_broadcast_count(tmp_path):
+    _write_debug_config(tmp_path)
+    ok = recovery.fire(str(tmp_path), "w1", "WHEN", send=lambda c, t: None)
+    assert ok is True
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: reset broadcast to 1 destination(s) window=w1" in log
+
+
+def test_main_debug_logs_started_and_fired(tmp_path, monkeypatch):
+    _write_debug_config(tmp_path)
+    monkeypatch.setattr(recovery, "fire", lambda base, window, when: None)
+    rc = recovery.main(["--base-dir", str(tmp_path), "--window", "w1", "--target", "1"])
+    assert rc == 0
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: sleeper started window=w1 target=1" in log
+    assert "recovery: target reached window=w1 — firing" in log
+
+
+def test_main_debug_logs_cap_exceeded_without_firing(tmp_path, monkeypatch):
+    _write_debug_config(tmp_path)
+    fired = []
+    monkeypatch.setattr(recovery, "fire",
+                        lambda base, window, when: fired.append((base, window)))
+    base_time = 1_000_000.0
+    calls = {"n": 0}
+
+    def fake_time():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return base_time
+        return base_time + usagelimit.CAP_SECONDS + 1
+
+    monkeypatch.setattr(recovery.time, "time", fake_time)
+    monkeypatch.setattr(recovery.time, "sleep", lambda s: None)
+    target = base_time + usagelimit.CAP_SECONDS + 1_000_000
+    rc = recovery.main(["--base-dir", str(tmp_path), "--window", "w1", "--target", str(target)])
+    assert rc == 0
+    assert fired == []
+    log = (tmp_path / "debug.log").read_text()
+    assert "recovery: sleeper exiting without firing window=w1 reason=cap exceeded" in log

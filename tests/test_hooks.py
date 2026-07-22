@@ -480,3 +480,45 @@ def test_usage_limit_same_reset_text_different_days_both_broadcast(tmp_path, mon
     payload2 = {"session_id": "day2", "transcript_path": t2, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload2)) == 0
     assert len(sent) == 2   # second, genuinely-separate hit was silently dropped pre-fix
+
+
+def test_usage_limit_debug_logs_feature_disabled(tmp_path, monkeypatch):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\n"
+        "TELEGRAM_API_BASE=http://127.0.0.1:1\nNOTIFY_DEBUG=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "d1", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    log = (tmp_path / "debug.log").read_text()
+    assert "usage-limit: feature disabled" in log
+
+
+def test_usage_limit_debug_logs_when_not_last_entry(tmp_path, monkeypatch):
+    # This is the exact blind spot that made a real missing-notification report
+    # impossible to diagnose: previously reset_text is None returned silently.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\nNOTIFY_DEBUG=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,'
+        '"message":{"content":[{"type":"text","text":"All done."}]}}',
+    ])
+    payload = {"session_id": "d2", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    log = (tmp_path / "debug.log").read_text()
+    assert "usage-limit: no rate-limit as last transcript entry" in log
+    assert transcript in log
+
+
+def test_usage_limit_debug_logs_duplicate_suppressed(tmp_path, monkeypatch):
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\nNOTIFY_DEBUG=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "d3", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert hooks.run("stop", json.dumps(payload)) == 0   # same window again
+    log = (tmp_path / "debug.log").read_text()
+    assert "already claimed — suppressing duplicate" in log
