@@ -596,3 +596,108 @@ def test_stop_failure_retry_exhausted_falls_back_to_normal_error(tmp_path, monke
     assert hooks.run("stop_failure", json.dumps(payload)) == 0
     assert len(sent) == 1
     assert "stopped with error" in sent[0]
+
+
+def test_stop_failure_logs_raw_error_payload_fields(tmp_path, monkeypatch):
+    # Verification step, not a behavior change: Claude Code's official hooks
+    # docs say StopFailure's own JSON payload already carries a structured
+    # `error` field and an `error_details`/`last_assistant_message` pair with
+    # no transcript read involved at all -- a potentially race-free
+    # alternative to the current transcript-scan detection. Log them raw
+    # (regardless of what transcript-based detection concludes) so a real
+    # production rate_limit event can be inspected to confirm whether
+    # last_assistant_message actually carries the reset-time text before any
+    # detection logic is redesigned around it.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\nNOTIFY_DEBUG=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {
+        "session_id": "p1", "transcript_path": transcript, "cwd": "/w",
+        "error": "rate_limit", "error_details": "429 Too Many Requests",
+        "last_assistant_message": "You've hit your session limit · resets 9pm (Asia/Hong_Kong)",
+    }
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    log = (tmp_path / "debug.log").read_text()
+    assert "stop_failure payload" in log
+    assert "rate_limit" in log
+    assert "429 Too Many Requests" in log
+    assert "resets 9pm" in log
+
+
+def test_stop_failure_logs_raw_payload_fields_when_absent(tmp_path, monkeypatch):
+    # Older Claude Code versions (or a StopFailure with no error text) may
+    # omit these fields entirely -- must never raise, just log None.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\nNOTIFY_DEBUG=true\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {"session_id": "p2", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    log = (tmp_path / "debug.log").read_text()
+    assert "stop_failure payload" in log
+
+
+def test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable(tmp_path, monkeypatch):
+    # The race-free half of the redesign: if even the retry can't see the
+    # rate-limit line in the transcript, StopFailure's own error field (no
+    # file read, no race at all) must still classify this as a usage limit
+    # instead of falling through to the generic "stopped with error" message.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    monkeypatch.setattr(hooks, "_sleep", lambda s: None)
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", lambda path: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {
+        "session_id": "f1", "transcript_path": transcript, "cwd": "/w",
+        "error": "rate_limit",
+        "last_assistant_message": "You've hit your session limit · resets 9pm (Asia/Hong_Kong)",
+    }
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "Claude Code usage limit reached" in sent[0]
+    assert "resets 9pm" in sent[0]
+
+
+def test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too(tmp_path, monkeypatch):
+    # last_assistant_message is documented as optional even when error is
+    # present -- still must not crash or fall through to the generic path.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    monkeypatch.setattr(hooks, "_sleep", lambda s: None)
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", lambda path: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {
+        "session_id": "f2", "transcript_path": transcript, "cwd": "/w",
+        "error": "rate_limit",
+    }
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "Claude Code usage limit reached" in sent[0]
+
+
+def test_stop_failure_prefers_transcript_text_over_payload_when_both_present(tmp_path, monkeypatch):
+    # Transcript text is proven (it's what our own parse_reset/window_key
+    # depend on) and richer than the payload fallback, so it must win
+    # whenever it's actually available -- the payload is a fallback, not a
+    # replacement.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    transcript = _write_transcript(tmp_path, [
+        _rate_limit_line("You've hit your session limit · resets 3pm (Asia/Hong_Kong)")
+    ])
+    payload = {
+        "session_id": "f3", "transcript_path": transcript, "cwd": "/w",
+        "error": "rate_limit",
+        "last_assistant_message": "API Error: Rate limit reached",
+    }
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "resets 3pm" in sent[0]
+    assert "API Error" not in sent[0]

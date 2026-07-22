@@ -2,7 +2,10 @@
 
 ## Status
 
-Resolved. Fix shipped in the commit that added this document.
+Resolved, in two stages. An initial transcript-read retry mitigated the race empirically. A follow-up fix
+(see "Follow-up" below) then used Claude Code's own documented `StopFailure` payload fields to make the
+classification itself race-free — found only after checking the official hooks docs, which turned out to
+already describe more of this than the retry alone could fix.
 
 ## Summary
 
@@ -112,6 +115,49 @@ it), `test_stop_does_not_retry_transcript_read` (locks in that `handle_stop` nev
 through to the normal notification once retries are exhausted). All three were run and confirmed failing
 (`_sleep` didn't exist yet) before the fix was written.
 
+## Follow-up: the official docs already documented a race-free field
+
+After the retry fix above had already shipped, the natural next question was asked: is this a *known*
+Claude Code behavior, and does its hook contract offer anything better than reading a file that might not
+be flushed yet? Checking Claude Code's official hooks reference
+([code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)) directly answered both:
+
+- The docs state outright: *"The transcript file is written asynchronously and may lag the in-memory
+  conversation, so it may not yet include the current turn's most recent messages when a hook fires."* —
+  the exact race measured in incident 2, documented as expected behavior, not something to report as a bug.
+- `StopFailure`'s own hook input already includes a structured `error` field (an enum — `rate_limit`,
+  `overloaded`, `authentication_failed`, `billing_error`, and others — used for matcher filtering) and an
+  optional `last_assistant_message` holding "the rendered error text shown in the conversation". Both
+  arrive as part of the hook's stdin JSON, which Claude Code constructs before the hook process even
+  starts — **no transcript file read involved, ever, for these two fields.**
+- A public GitHub issue, [`anthropics/claude-code#15813`](https://github.com/anthropics/claude-code/issues/15813)
+  ("Stop hook receives stale transcript - race condition between file write and hook invocation"),
+  independently confirms the same mechanism: the hook process is spawned before the transcript write
+  flushes. It was closed by a stale-bot for inactivity, not resolved-and-linked, so it wasn't an
+  official fix commitment — `last_assistant_message` on `Stop`/`SubagentStop` looks like Anthropic's answer
+  to it for the success path; `StopFailure`'s copy of the same field carries the *error* text instead of
+  conversational output, a related but distinct piece of the same mitigation.
+
+This also revealed that this project's own `docs/claude-notify-product-doc.md` §5.1 — which enumerates the
+hook payload as just `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name` — is stale
+relative to Claude Code's current contract (depending on event, it now also sends `error`, `error_details`,
+`last_assistant_message`, `stop_hook_active`, `background_tasks`, `session_crons`, and more). Earlier in
+this same investigation, *that* internal doc (not the official one) was what got consulted, leading to the
+conclusion "there's no native error-reason field to use" — which was wrong.
+
+Detection was updated a second time: still prefer the transcript-derived text first (it remains the
+richest source — the only one `parse_reset()`/`window_key()` can extract a specific, schedulable reset
+time from), but if the transcript read is still empty after the existing retry, fall back to
+`payload["error"] == "rate_limit"` (using `last_assistant_message`, or a fixed generic string if even that's
+absent) so a genuine rate limit can never again be misclassified as a generic error — only the notification's
+*richness* (specific time, reset-ping scheduling) stays best-effort. Verified test-first:
+`test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable`,
+`test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too`,
+`test_stop_failure_prefers_transcript_text_over_payload_when_both_present` — plus
+`test_stop_failure_logs_raw_error_payload_fields` and `test_stop_failure_logs_raw_payload_fields_when_absent`,
+added as a pure observability step *before* this fix, to log the raw fields for one real occurrence and
+confirm their actual content before any logic was built on them.
+
 ## Lesson
 
 **A hook payload's `transcript_path` is not a guarantee that the file is fully written — it's a guarantee
@@ -120,6 +166,20 @@ populated, at the instant a hook fires" must treat a negative result as provisio
 a graceful, fully-assembled completion. A normal `Stop` after a real successful response has a wide,
 effectively-safe margin; an error/interrupt path (`StopFailure`) does not, because the error condition and
 the transcript write it produces aren't necessarily ordered relative to the hook firing.
+
+**A second, costlier lesson surfaced only after the retry fix had already shipped: this project's
+understanding of Claude Code's hook contract was checked against its own stale internal notes, not the
+current official docs, and that cost real effort before anyone caught it.** The retry fix, its dedicated
+tests, and the millisecond-precision forensic mtime comparison in incident 2 are all genuine, still-useful
+work — the retry remains real defense-in-depth for whatever the payload fallback doesn't cover, and the
+forensic method (compare a debug-log timestamp against `stat`'s mtime) is reusable for the next unrelated
+mystery. But none of the *specific numbers* — why ~20ms, why a 200ms retry, whether `Stop` is provably safe
+— needed to be reverse-engineered from raw timestamps at all: Claude Code's official hooks reference
+already stated the transcript can lag, and already named the exact fields (`last_assistant_message`, plus a
+structured `error` enum on `StopFailure`) built for this. Reading `docs.claude.com`'s current hooks page —
+a five-minute read — would have surfaced the race-free fallback before any retry-tuning or mtime math was
+needed, and would have caught that this project's own product-doc's hook-payload-field list (§5.1) had gone
+stale.
 
 **How to apply this going forward:**
 - Before adding new detection logic that reads the transcript from a `StopFailure` (or any
@@ -133,6 +193,11 @@ the transcript write it produces aren't necessarily ordered relative to the hook
   timestamp against `stat`'s mtime on the actual transcript file is what turned an ambiguous, unfalsifiable
   hypothesis (incident 1) into a proven one with a concrete number (incident 2). Instrument before
   hypothesizing further.
+- **Before reverse-engineering any platform behavior empirically (timestamps, mtimes, retry-until-it-works),
+  check the platform's current official documentation for the exact contract first** — not this project's
+  own notes about it, which can go stale (as `claude-notify-product-doc.md` §5.1 did here) the moment the
+  platform adds a field. A five-minute doc check can make an entire investigation unnecessary; an
+  investigation can't tell you what the vendor already wrote down.
 
 ## Related
 
@@ -140,10 +205,21 @@ the transcript write it produces aren't necessarily ordered relative to the hook
   `handle_stop_failure`.
 - `claude_code_notify/usagelimit.py` — `latest_usage_limit` (unchanged; proven correct against the same
   data post-hoc in both incidents).
-- `tests/test_hooks.py` — `test_stop_failure_retries_transcript_read_to_bridge_write_race`,
-  `test_stop_does_not_retry_transcript_read`, `test_stop_failure_retry_exhausted_falls_back_to_normal_error`.
+- `tests/test_hooks.py` — retry: `test_stop_failure_retries_transcript_read_to_bridge_write_race`,
+  `test_stop_does_not_retry_transcript_read`, `test_stop_failure_retry_exhausted_falls_back_to_normal_error`;
+  payload fallback: `test_stop_failure_logs_raw_error_payload_fields`,
+  `test_stop_failure_logs_raw_payload_fields_when_absent`,
+  `test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable`,
+  `test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too`,
+  `test_stop_failure_prefers_transcript_text_over_payload_when_both_present`.
 - The commit immediately before this one (debug-logging coverage for every usage-limit branch in
   `hooks.py` and `recovery.py`) — the prerequisite instrumentation that made incident 2 diagnosable at all.
+- [Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md) — documents the transcript-lag
+  behavior directly and the `error`/`last_assistant_message` fields the follow-up fix now uses.
+- [`anthropics/claude-code#15813`](https://github.com/anthropics/claude-code/issues/15813) — a public
+  report of the same race, independent of this incident.
+- `docs/claude-notify-product-doc.md` §5.1 — this project's own hook-payload-field list, now known to be
+  stale relative to Claude Code's current contract; worth a dedicated refresh.
 - [`0001-sendmessage-untracked-background-dispatch.md`](0001-sendmessage-untracked-background-dispatch.md)
   — a different bug in the same tool, but the same underlying lesson: a missing-notification report is
   worth a forensic reconstruction from real transcripts/logs, not a guess.

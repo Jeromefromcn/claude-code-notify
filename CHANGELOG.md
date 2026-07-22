@@ -30,7 +30,13 @@ All notable changes to this project are documented here. Format follows
   rate-limit envelope to the transcript (observed gap: ~20ms), so a genuine
   usage-limit hit was read as "not a usage limit" and only the generic
   "stopped with error" notification was sent. Add one bounded retry (200ms)
-  to the `StopFailure` detection path only — `Stop` is unaffected. See
+  to the `StopFailure` detection path only — `Stop` is unaffected. Follow-up:
+  Claude Code's own `StopFailure` payload already carries a structured
+  `error` field and a `last_assistant_message` fallback text, sourced from
+  the hook's stdin JSON with no transcript read involved — use these when
+  the transcript is still unavailable after the retry, so a genuine rate
+  limit can no longer be misclassified as a generic error even in the worst
+  case. See
   [docs/lessons-learned/0002-stopfailure-transcript-write-race.md](docs/lessons-learned/0002-stopfailure-transcript-write-race.md).
 
 ## [0.3.0] - 2026-07-17

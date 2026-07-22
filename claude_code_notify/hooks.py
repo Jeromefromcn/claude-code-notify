@@ -95,6 +95,15 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
         _sleep(delay)
         retries_used += 1
         reset_text = usagelimit.latest_usage_limit(transcript)
+    if reset_text is None and payload.get("error") == "rate_limit":
+        # StopFailure's own payload already says this was a rate limit — no
+        # transcript read involved, so no race, unlike the check above. Used
+        # as a fallback classification (not the primary source) because
+        # last_assistant_message's exact content isn't yet confirmed to
+        # always carry a parseable reset time the way transcript text does;
+        # see docs/lessons-learned/0002-stopfailure-transcript-write-race.md.
+        reset_text = payload.get("last_assistant_message") or "usage limit reached"
+        _debug(config, "usage-limit: transcript unavailable — classified via payload error field")
     if reset_text is None:
         _debug(config, f"usage-limit: no rate-limit as last transcript entry "
                         f"(transcript={transcript}, retries={retries_used})")
@@ -148,6 +157,15 @@ def handle_stop(payload, config):
 
 
 def handle_stop_failure(payload, config):
+    # Verification step (not yet used for detection): Claude Code's hooks
+    # docs say StopFailure's own payload carries `error`/`error_details`/
+    # `last_assistant_message` with no transcript read involved. Log them raw,
+    # regardless of what transcript-based detection below concludes, so a
+    # real rate_limit occurrence can be inspected to confirm whether these
+    # fields are a race-free alternative before any logic is built on them.
+    _debug(config, f"stop_failure payload: error={payload.get('error')!r} "
+                    f"error_details={payload.get('error_details')!r} "
+                    f"last_assistant_message={payload.get('last_assistant_message')!r}")
     if _maybe_handle_usage_limit(payload, config, retry_delays=_STOP_FAILURE_RETRY_DELAYS):
         return
     cwd = payload.get("cwd", "")
