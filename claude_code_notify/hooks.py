@@ -79,14 +79,15 @@ def _maybe_handle_usage_limit(payload, config):
     if reset_text is None:
         return False
     cwd = payload.get("cwd", "")
-    key = usagelimit.window_key(reset_text)
-    usagelimit.gc(config.base_dir, _now())
+    now = _now()
+    target = usagelimit.parse_reset(reset_text, now)
+    key = usagelimit.window_key(reset_text, target)
+    usagelimit.gc(config.base_dir, now)
     if usagelimit.claim_hit(config.base_dir, key):
         message = notifier.build_message("usage-limit", cwd, _when(), title=reset_text)
         count = broadcast.send_all(config, message)
         _debug(config, f"usage-limit hit broadcast to {count} destination(s)")
         if config.usage_limit_reset:
-            target = usagelimit.parse_reset(reset_text, _now())
             if target is not None:
                 recovery.spawn(config.base_dir, key, target)
                 _debug(config, f"usage-limit reset scheduled at {int(target)}")

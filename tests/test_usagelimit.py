@@ -72,6 +72,29 @@ def test_window_key_stable_and_distinct():
     assert len(a) == 16
 
 
+def test_window_key_distinguishes_same_text_different_dates():
+    import datetime as _dt
+    day1 = _dt.datetime(2026, 7, 21, 14, 0, 0).timestamp()
+    day2 = _dt.datetime(2026, 7, 24, 14, 0, 0).timestamp()
+    a = usagelimit.window_key("resets 2pm", day1)
+    b = usagelimit.window_key("resets 2pm", day2)
+    assert a != b
+
+
+def test_window_key_same_text_same_date_still_matches():
+    import datetime as _dt
+    now = _dt.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    same_epoch = usagelimit.parse_reset("resets 2pm", now)
+    a = usagelimit.window_key("resets 2pm", same_epoch)
+    b = usagelimit.window_key("resets 2pm", same_epoch)
+    assert a == b
+
+
+def test_window_key_falls_back_to_text_only_without_target():
+    # Backward-compatible default; also the weekly-limit (unparseable) path.
+    assert usagelimit.window_key("resets 2pm") == usagelimit.window_key("resets 2pm", None)
+
+
 def test_claim_is_single_winner(tmp_path):
     assert usagelimit.claim_hit(str(tmp_path), "w1") is True
     assert usagelimit.claim_hit(str(tmp_path), "w1") is False

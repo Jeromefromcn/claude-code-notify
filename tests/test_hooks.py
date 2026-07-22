@@ -1,3 +1,4 @@
+import datetime
 import io
 import json
 import os
@@ -443,3 +444,39 @@ def test_usage_limit_stop_then_stop_failure_same_window_suppresses_without_resen
     assert hooks.run("stop_failure", json.dumps(payload)) == 0
     assert len(sent) == 1                                  # no second broadcast
     assert all("finished" not in t and "stopped with error" not in t for t in sent)
+
+
+def test_usage_limit_same_reset_text_different_days_both_broadcast(tmp_path, monkeypatch):
+    # Regression for window_key collisions across distinct reset dates. Two
+    # genuinely separate usage-limit events on different calendar days can
+    # render the *same* clock time ("resets 2pm" has no date). The pre-fix
+    # text-only key hashed those to one value, so the second day's hit
+    # collided with the first day's still-live marker and was silently dropped
+    # — no broadcast, and the normal notification suppressed too. Both days
+    # must broadcast. Days are 4 apart: inside gc's 30-day window, so the
+    # day-1 marker is still on disk and only a date-aware key lets day 2 pass.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")  # keep it process-free
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    reset_text = "You've hit your session limit · resets 2pm (Asia/Hong_Kong)"
+
+    # Day 1: rate limit at 10:00 local, so the next 2pm is later the same day.
+    day1_dir = tmp_path / "day1"
+    day1_dir.mkdir()
+    t1 = _write_transcript(day1_dir, [_rate_limit_line(reset_text)])
+    monkeypatch.setattr(hooks, "_now", lambda: datetime.datetime(2026, 7, 20, 10, 0, 0).timestamp())
+    payload1 = {"session_id": "day1", "transcript_path": t1, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload1)) == 0
+    assert len(sent) == 1
+    assert "Claude Code usage limit reached" in sent[0]
+
+    # Day 2 (four days later): a fresh transcript with identical displayed text
+    # must broadcast again.
+    day2_dir = tmp_path / "day2"
+    day2_dir.mkdir()
+    t2 = _write_transcript(day2_dir, [_rate_limit_line(reset_text)])
+    monkeypatch.setattr(hooks, "_now", lambda: datetime.datetime(2026, 7, 24, 10, 0, 0).timestamp())
+    payload2 = {"session_id": "day2", "transcript_path": t2, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload2)) == 0
+    assert len(sent) == 2   # second, genuinely-separate hit was silently dropped pre-fix

@@ -4,17 +4,7 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-- `SendMessage` (resuming a previously-spawned background agent) was not
-  tracked as a background dispatch, so the `Stop` hook could announce
-  "finished" while a resumed agent was still running in the background — the
-  same class of false positive as the original background-`Bash` bug, but
-  for a tool added after that fix landed. See
-  [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md).
-
-## [0.4.0]
+## [0.4.0] - 2026-07-22
 
 ### Added
 - Usage-limit notifications (opt-in, off by default). When the account hits a
@@ -28,6 +18,14 @@ All notable changes to this project are documented here. Format follows
   only the hit broadcast and never spawn a background process). Best-effort —
   missed if the machine is off at reset time; weekly-limit reset times are not
   yet parsed. Uninstall terminates any live sleeper.
+
+### Fixed
+- `SendMessage` (resuming a previously-spawned background agent) was not
+  tracked as a background dispatch, so the `Stop` hook could announce
+  "finished" while a resumed agent was still running in the background — the
+  same class of false positive as the original background-`Bash` bug, but
+  for a tool added after that fix landed. See
+  [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md).
 
 ## [0.3.0] - 2026-07-17
 

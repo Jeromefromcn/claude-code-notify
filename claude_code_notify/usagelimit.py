@@ -47,9 +47,21 @@ def latest_usage_limit(path):
     return None
 
 
-def window_key(reset_text):
-    """Opaque, filesystem-safe dedup key for one reset window."""
-    return hashlib.sha1((reset_text or "").strip().encode("utf-8")).hexdigest()[:16]
+def window_key(reset_text, target_epoch=None):
+    """Opaque, filesystem-safe dedup key for one reset window.
+
+    Reset text alone is not date-specific (e.g. "resets 9pm" repeats every
+    day), so two unrelated limit events on different days can render
+    identical text. When a parsed target epoch is available, its date is
+    folded into the key so distinct occurrences never collide; falls back
+    to text-only when the reset time couldn't be parsed (e.g. weekly-limit
+    text), which still avoids duplicate work within one unparseable window.
+    """
+    text = (reset_text or "").strip()
+    if target_epoch is not None:
+        date_part = datetime.date.fromtimestamp(target_epoch).isoformat()
+        text = f"{text}|{date_part}"
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
 CAP_SECONDS = 8 * 24 * 3600
