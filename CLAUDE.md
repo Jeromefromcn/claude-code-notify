@@ -21,6 +21,7 @@ Standalone, versioned tool that sends Telegram notifications from Claude Code ho
 - **Credit any external project or reference consulted in README.md's "Related work" section.** No uncredited borrowing of code or ideas.
 - Telegram-only. Global-install-only (`~/.claude/`); per-directory routing (`config.env` `ROUTE_<n>_*`) sends different directory subtrees to different chats/bots — longest-prefix match, deeper dir wins, subtree inherits, mute supported (doc §5.3.2). Don't add other channels or project-level (`--local`) install without checking the roadmap (doc §11).
 - **All files pushed to remote (code, docs, commit messages, PRs) must be written in English.**
+- **Usage-limit notifications are opt-in (`NOTIFY_USAGE_LIMIT`, default off)**; the reset-ping background "sleeper" is the one sanctioned exception to the no-daemon principle (doc §5.5).
 
 ## Editing this file
 
