@@ -200,6 +200,11 @@ passed through as the message body and used as an opaque per-window dedup key.
 When detected, the misleading normal "finished"/"error" notification is
 suppressed for that turn.
 
+`StopFailure` can fire before Claude Code finishes flushing the terminal
+rate-limit envelope to the transcript, so the `StopFailure` path (only) retries
+the read once after a short delay before concluding there's no usage limit —
+see [lessons learned 0002](lessons-learned/0002-stopfailure-transcript-write-race.md).
+
 **Reset ping** (`NOTIFY_USAGE_LIMIT_RESET`, default on when the feature is on;
 set false for hit-only, zero background processes). At the reported reset time
 a one-shot "usage limit reset" broadcast is delivered by a transient,

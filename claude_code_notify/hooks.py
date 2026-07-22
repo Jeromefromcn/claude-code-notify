@@ -68,7 +68,18 @@ def _debug(config, line):
         pass  # debug logging must never itself break the hook
 
 
-def _maybe_handle_usage_limit(payload, config):
+def _sleep(seconds):
+    time.sleep(seconds)
+
+
+# StopFailure can fire before Claude Code finishes flushing the terminal
+# transcript envelope to disk (observed gap: ~20ms in production). Retrying
+# only here — not from handle_stop — bridges that race without adding
+# latency to the far more common normal-completion path.
+_STOP_FAILURE_RETRY_DELAYS = (0.2,)
+
+
+def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     """If this turn ended in a usage limit, broadcast to all destinations
     (once per window), optionally schedule the reset ping, and return True so
     the caller skips its normal notification. Never raises out."""
@@ -77,9 +88,19 @@ def _maybe_handle_usage_limit(payload, config):
         return False
     transcript = payload.get("transcript_path", "")
     reset_text = usagelimit.latest_usage_limit(transcript)
+    retries_used = 0
+    for delay in retry_delays:
+        if reset_text is not None:
+            break
+        _sleep(delay)
+        retries_used += 1
+        reset_text = usagelimit.latest_usage_limit(transcript)
     if reset_text is None:
-        _debug(config, f"usage-limit: no rate-limit as last transcript entry (transcript={transcript})")
+        _debug(config, f"usage-limit: no rate-limit as last transcript entry "
+                        f"(transcript={transcript}, retries={retries_used})")
         return False
+    if retries_used:
+        _debug(config, f"usage-limit: detected after {retries_used} retry(ies) (transcript={transcript})")
     cwd = payload.get("cwd", "")
     now = _now()
     target = usagelimit.parse_reset(reset_text, now)
@@ -127,7 +148,7 @@ def handle_stop(payload, config):
 
 
 def handle_stop_failure(payload, config):
-    if _maybe_handle_usage_limit(payload, config):
+    if _maybe_handle_usage_limit(payload, config, retry_delays=_STOP_FAILURE_RETRY_DELAYS):
         return
     cwd = payload.get("cwd", "")
     res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)

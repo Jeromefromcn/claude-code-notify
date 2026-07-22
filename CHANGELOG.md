@@ -26,6 +26,12 @@ All notable changes to this project are documented here. Format follows
   same class of false positive as the original background-`Bash` bug, but
   for a tool added after that fix landed. See
   [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md).
+- `StopFailure` can fire before Claude Code finishes writing the terminal
+  rate-limit envelope to the transcript (observed gap: ~20ms), so a genuine
+  usage-limit hit was read as "not a usage limit" and only the generic
+  "stopped with error" notification was sent. Add one bounded retry (200ms)
+  to the `StopFailure` detection path only — `Stop` is unaffected. See
+  [docs/lessons-learned/0002-stopfailure-transcript-write-race.md](docs/lessons-learned/0002-stopfailure-transcript-write-race.md).
 
 ## [0.3.0] - 2026-07-17
 

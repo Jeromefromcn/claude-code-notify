@@ -522,3 +522,77 @@ def test_usage_limit_debug_logs_duplicate_suppressed(tmp_path, monkeypatch):
     assert hooks.run("stop", json.dumps(payload)) == 0   # same window again
     log = (tmp_path / "debug.log").read_text()
     assert "already claimed — suppressing duplicate" in log
+
+
+def test_stop_failure_retries_transcript_read_to_bridge_write_race(tmp_path, monkeypatch):
+    # Regression for an observed Claude Code race: StopFailure can fire ~20ms
+    # before the terminal (error) transcript envelope is flushed to disk, so
+    # the very first read finds nothing. Simulate that by making the first
+    # latest_usage_limit() call return None and the second the real reset
+    # text, as if the write landed between the two reads.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    monkeypatch.setattr(hooks, "_sleep", lambda s: None)  # don't actually wait in tests
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    real_latest = hooks.usagelimit.latest_usage_limit
+    calls = {"n": 0}
+
+    def flaky_latest(path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None   # first read: as if the line weren't written yet
+        return real_latest(path)
+
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", flaky_latest)
+    payload = {"session_id": "r1", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert calls["n"] == 2   # one retry, then it saw the real content
+    assert len(sent) == 1
+    assert "Claude Code usage limit reached" in sent[0]
+
+
+def test_stop_does_not_retry_transcript_read(tmp_path, monkeypatch):
+    # The retry is scoped to StopFailure only (rare) so the far more common
+    # Stop path never pays extra latency on every normal turn.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    slept = []
+    monkeypatch.setattr(hooks, "_sleep", lambda s: slept.append(s))
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,'
+        '"message":{"content":[{"type":"text","text":"All done."}]}}',
+    ])
+    calls = {"n": 0}
+    real_latest = hooks.usagelimit.latest_usage_limit
+
+    def counting_latest(path):
+        calls["n"] += 1
+        return real_latest(path)
+
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", counting_latest)
+    payload = {"session_id": "r2", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert calls["n"] == 1   # no retry on the Stop path
+    assert slept == []
+
+
+def test_stop_failure_retry_exhausted_falls_back_to_normal_error(tmp_path, monkeypatch):
+    # A genuine non-rate-limit error must still fall through to the normal
+    # "stopped with error" notification after the retry is exhausted.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    monkeypatch.setattr(hooks, "_sleep", lambda s: None)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,'
+        '"error":"overloaded_error","message":{"content":'
+        '[{"type":"text","text":"Overloaded"}]}}',
+    ])
+    payload = {"session_id": "r3", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "stopped with error" in sent[0]
