@@ -205,10 +205,17 @@ No text is matched to detect; the reset text is passed through as the message
 body and used as an opaque per-window dedup key. When detected, the misleading
 normal "finished"/"error" notification is suppressed for that turn.
 
-`StopFailure` can fire before Claude Code finishes flushing the terminal
-rate-limit envelope to the transcript, so the `StopFailure` path (only) retries
-the read once after a short delay before concluding there's no usage limit —
-see [lessons learned 0002](lessons-learned/0002-stopfailure-transcript-write-race.md).
+On the `StopFailure` path, detection prefers the hook's own payload fields
+(`error`, `last_assistant_message`, `error_details`) over the transcript —
+they arrive in the hook's stdin JSON with no file read and no race, and a
+real production event confirmed they carry the same text the transcript
+does; see [lessons learned 0004](lessons-learned/0004-stopfailure-payload-is-sufficient.md).
+The transcript (which `StopFailure` can fire before finishing flushing to
+disk) is read only as a fallback, with one retry after a short delay, when
+the payload itself doesn't classify as a usable rate limit — see
+[lessons learned 0002](lessons-learned/0002-stopfailure-transcript-write-race.md).
+The plain `Stop` path has no such payload fields and always reads the
+transcript directly, with no retry.
 
 **Reset ping** (`NOTIFY_USAGE_LIMIT_RESET`, default on when the feature is on;
 set false for hit-only, zero background processes). At the reported reset time

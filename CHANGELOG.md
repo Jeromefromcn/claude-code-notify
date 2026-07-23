@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- `StopFailure` usage-limit detection now prefers the hook's own payload
+  fields (`error`, `last_assistant_message`, `error_details`) over reading
+  the transcript, instead of the other way around. A real production event
+  confirmed the payload carries the same text the transcript does, race-free
+  and without a file read; the transcript (with its existing 0.2s retry) is
+  now used only as a fallback when the payload itself doesn't classify as a
+  usable rate limit. The plain `Stop` path is unaffected. See
+  [docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md](docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md).
+
 ### Fixed
 - A per-model usage-credits error (e.g. Fable 5 without usage credits
   enabled) was misclassified as an account-level usage limit, because Claude

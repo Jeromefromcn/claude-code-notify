@@ -75,39 +75,56 @@ def _sleep(seconds):
 # StopFailure can fire before Claude Code finishes flushing the terminal
 # transcript envelope to disk (observed gap: ~20ms in production). Retrying
 # only here — not from handle_stop — bridges that race without adding
-# latency to the far more common normal-completion path.
+# latency to the far more common normal-completion path. As of
+# docs/lessons-learned/0004, this retry only runs when StopFailure's own
+# payload didn't already give us everything we need (see below) — a real
+# production event confirmed the payload is normally sufficient on its own.
 _STOP_FAILURE_RETRY_DELAYS = (0.2,)
 
 
 def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     """If this turn ended in a usage limit, broadcast to all destinations
     (once per window), optionally schedule the reset ping, and return True so
-    the caller skips its normal notification. Never raises out."""
+    the caller skips its normal notification. Never raises out.
+
+    Detection prefers StopFailure's own payload fields (`error`,
+    `last_assistant_message`, `error_details`) over reading the transcript:
+    they arrive in the hook's stdin JSON with no file read and no race,
+    unlike the transcript, which Claude Code may still be writing when the
+    hook fires (docs/lessons-learned/0002). A real production event
+    confirmed `last_assistant_message` carries the identical text the
+    transcript would have — see docs/lessons-learned/0004. The transcript
+    read (with its retry) only runs as a fallback for the untested case
+    where the payload doesn't classify as a rate limit at all — e.g. the
+    plain `Stop` path, which never carries a StopFailure-style `error`
+    field, or a `error: rate_limit` payload missing `last_assistant_message`.
+    """
     if not config.usage_limit:
         _debug(config, "usage-limit: feature disabled — skipping detection")
         return False
     transcript = payload.get("transcript_path", "")
-    reset_text = usagelimit.latest_usage_limit(transcript)
+    payload_is_rate_limit = payload.get("error") == "rate_limit" and \
+        not usagelimit.is_model_credits_error(payload.get("error_details"))
+    reset_text = None
     retries_used = 0
-    for delay in retry_delays:
-        if reset_text is not None:
-            break
-        _sleep(delay)
-        retries_used += 1
+    if payload_is_rate_limit and payload.get("last_assistant_message"):
+        reset_text = payload["last_assistant_message"]
+        _debug(config, "usage-limit: detected via payload fields — no transcript read needed")
+    else:
         reset_text = usagelimit.latest_usage_limit(transcript)
-    if reset_text is None and payload.get("error") == "rate_limit" and \
-            not usagelimit.is_model_credits_error(payload.get("error_details")):
-        # StopFailure's own payload already says this was a rate limit — no
-        # transcript read involved, so no race, unlike the check above. Used
-        # as a fallback classification (not the primary source) because
-        # last_assistant_message's exact content isn't yet confirmed to
-        # always carry a parseable reset time the way transcript text does;
-        # see docs/lessons-learned/0002-stopfailure-transcript-write-race.md.
-        # error_details is checked to exclude per-model credit gates (e.g.
-        # Fable 5) that Claude Code also tags error="rate_limit" — see
-        # docs/lessons-learned/0003-model-credits-error-misclassified.md.
-        reset_text = payload.get("last_assistant_message") or "usage limit reached"
-        _debug(config, "usage-limit: transcript unavailable — classified via payload error field")
+        for delay in retry_delays:
+            if reset_text is not None:
+                break
+            _sleep(delay)
+            retries_used += 1
+            reset_text = usagelimit.latest_usage_limit(transcript)
+        if reset_text is None and payload_is_rate_limit:
+            # error is rate_limit but last_assistant_message was absent and
+            # the transcript came up empty too — still classify as a hit,
+            # just without a specific, schedulable reset time.
+            reset_text = "usage limit reached"
+            _debug(config, "usage-limit: transcript unavailable and payload message "
+                            "absent — classified via payload error field only")
     if reset_text is None:
         _debug(config, f"usage-limit: no rate-limit as last transcript entry "
                         f"(transcript={transcript}, retries={retries_used})")

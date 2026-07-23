@@ -638,17 +638,24 @@ def test_stop_failure_logs_raw_payload_fields_when_absent(tmp_path, monkeypatch)
     assert "stop_failure payload" in log
 
 
-def test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable(tmp_path, monkeypatch):
-    # The race-free half of the redesign: if even the retry can't see the
-    # rate-limit line in the transcript, StopFailure's own error field (no
-    # file read, no race at all) must still classify this as a usage limit
-    # instead of falling through to the generic "stopped with error" message.
+def test_stop_failure_uses_payload_directly_without_reading_transcript(tmp_path, monkeypatch):
+    # The primary path as of 0004: StopFailure's own error + last_assistant_
+    # message fields are race-free and (per a real production event) just as
+    # rich as the transcript, so they're used directly — the transcript is
+    # never read and no retry/sleep happens at all.
     _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
     sent = []
+    slept = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
-    monkeypatch.setattr(hooks, "_sleep", lambda s: None)
-    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", lambda path: None)
+    monkeypatch.setattr(hooks, "_sleep", lambda s: slept.append(s))
+    calls = {"n": 0}
+
+    def unexpected_transcript_read(path):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", unexpected_transcript_read)
     transcript = _write_transcript(tmp_path, [_rate_limit_line()])
     payload = {
         "session_id": "f1", "transcript_path": transcript, "cwd": "/w",
@@ -659,6 +666,8 @@ def test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable(tm
     assert len(sent) == 1
     assert "Claude Code usage limit reached" in sent[0]
     assert "resets 9pm" in sent[0]
+    assert calls["n"] == 0   # transcript never read
+    assert slept == []       # no retry/sleep needed
 
 
 def test_stop_failure_payload_fallback_excludes_model_credits_error(tmp_path, monkeypatch):
@@ -705,11 +714,12 @@ def test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too
     assert "Claude Code usage limit reached" in sent[0]
 
 
-def test_stop_failure_prefers_transcript_text_over_payload_when_both_present(tmp_path, monkeypatch):
-    # Transcript text is proven (it's what our own parse_reset/window_key
-    # depend on) and richer than the payload fallback, so it must win
-    # whenever it's actually available -- the payload is a fallback, not a
-    # replacement.
+def test_stop_failure_prefers_payload_text_over_transcript_when_both_present(tmp_path, monkeypatch):
+    # Reversed in 0004: payload is race-free and proven sufficient, so it
+    # wins even when the transcript happens to also be available and would
+    # have contained different (here: richer) text. Accepting this
+    # occasional richness loss is the deliberate tradeoff for never reading
+    # the transcript in the common case.
     _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
     sent = []
@@ -724,5 +734,5 @@ def test_stop_failure_prefers_transcript_text_over_payload_when_both_present(tmp
     }
     assert hooks.run("stop_failure", json.dumps(payload)) == 0
     assert len(sent) == 1
-    assert "resets 3pm" in sent[0]
-    assert "API Error" not in sent[0]
+    assert "API Error: Rate limit reached" in sent[0]
+    assert "resets 3pm" not in sent[0]

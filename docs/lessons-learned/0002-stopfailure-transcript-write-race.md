@@ -2,10 +2,13 @@
 
 ## Status
 
-Resolved, in two stages. An initial transcript-read retry mitigated the race empirically. A follow-up fix
+Resolved, in three stages. An initial transcript-read retry mitigated the race empirically. A follow-up fix
 (see "Follow-up" below) then used Claude Code's own documented `StopFailure` payload fields to make the
 classification itself race-free — found only after checking the official hooks docs, which turned out to
-already describe more of this than the retry alone could fix.
+already describe more of this than the retry alone could fix. A third stage,
+[0004](0004-stopfailure-payload-is-sufficient.md), later promoted the payload fields from fallback to
+primary source once a real production event confirmed they're sufficient on their own — read that doc for
+the current priority order; this doc's "Follow-up" section below reflects the intermediate design only.
 
 ## Summary
 
@@ -209,9 +212,10 @@ stale.
   `test_stop_does_not_retry_transcript_read`, `test_stop_failure_retry_exhausted_falls_back_to_normal_error`;
   payload fallback: `test_stop_failure_logs_raw_error_payload_fields`,
   `test_stop_failure_logs_raw_payload_fields_when_absent`,
-  `test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable`,
-  `test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too`,
-  `test_stop_failure_prefers_transcript_text_over_payload_when_both_present`.
+  `test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too`.
+  (Two tests originally here, `..._falls_back_to_payload_error_when_transcript_unavailable` and
+  `..._prefers_transcript_text_over_payload_when_both_present`, were renamed/inverted in
+  [0004](0004-stopfailure-payload-is-sufficient.md) once the payload became the primary source.)
 - The commit immediately before this one (debug-logging coverage for every usage-limit branch in
   `hooks.py` and `recovery.py`) — the prerequisite instrumentation that made incident 2 diagnosable at all.
 - [Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md) — documents the transcript-lag
