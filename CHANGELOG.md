@@ -4,35 +4,7 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Changed
-- `StopFailure` usage-limit detection now prefers the hook's own payload
-  fields (`error`, `last_assistant_message`, `error_details`) over reading
-  the transcript, instead of the other way around. A real production event
-  confirmed the payload carries the same text the transcript does, race-free
-  and without a file read; the transcript (with its existing 0.2s retry) is
-  now used only as a fallback when the payload itself doesn't classify as a
-  usable rate limit. The plain `Stop` path is unaffected. See
-  [docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md](docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md).
-
-### Fixed
-- A per-model usage-credits error (e.g. Fable 5 without usage credits
-  enabled) was misclassified as an account-level usage limit, because Claude
-  Code tags both with the same envelope-level `error == "rate_limit"` field.
-  Detection now also checks the structured `errorDetails`/`error_details`
-  body and excludes `error_code == "credits_required"`, on both the
-  transcript and `StopFailure`-payload paths. See
-  [docs/lessons-learned/0003-model-credits-error-misclassified.md](docs/lessons-learned/0003-model-credits-error-misclassified.md).
-- The reset-ping sleeper computed the reset time in the host machine's local
-  timezone, ignoring the timezone Claude Code embeds in the reset text (e.g.
-  `(Asia/Hong_Kong)`). If the host's timezone ever differs from the account's
-  reported reset timezone, this silently fired the reset notification at the
-  wrong wall-clock time. `parse_reset` now resolves and uses the reported
-  timezone via `zoneinfo` when available, falling back to host local time
-  only when the zone name is absent or unresolvable.
-
-## [0.4.0] - 2026-07-22
+## [0.4.0] - 2026-07-23
 
 ### Added
 - Usage-limit notifications (opt-in, off by default). When the account hits a
@@ -47,6 +19,16 @@ All notable changes to this project are documented here. Format follows
   missed if the machine is off at reset time; weekly-limit reset times are not
   yet parsed. Uninstall terminates any live sleeper.
 
+### Changed
+- `StopFailure` usage-limit detection prefers the hook's own payload fields
+  (`error`, `last_assistant_message`, `error_details`) over reading the
+  transcript: they arrive in the hook's stdin JSON with no file read and no
+  race, and a real production event confirmed they carry the same text the
+  transcript does. The transcript (with a 0.2s retry) is used only as a
+  fallback when the payload itself doesn't classify as a usable rate limit.
+  The plain `Stop` path is unaffected. See
+  [docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md](docs/lessons-learned/0004-stopfailure-payload-is-sufficient.md).
+
 ### Fixed
 - `SendMessage` (resuming a previously-spawned background agent) was not
   tracked as a background dispatch, so the `Stop` hook could announce
@@ -57,15 +39,28 @@ All notable changes to this project are documented here. Format follows
 - `StopFailure` can fire before Claude Code finishes writing the terminal
   rate-limit envelope to the transcript (observed gap: ~20ms), so a genuine
   usage-limit hit was read as "not a usage limit" and only the generic
-  "stopped with error" notification was sent. Add one bounded retry (200ms)
-  to the `StopFailure` detection path only — `Stop` is unaffected. Follow-up:
-  Claude Code's own `StopFailure` payload already carries a structured
-  `error` field and a `last_assistant_message` fallback text, sourced from
-  the hook's stdin JSON with no transcript read involved — use these when
-  the transcript is still unavailable after the retry, so a genuine rate
-  limit can no longer be misclassified as a generic error even in the worst
-  case. See
+  "stopped with error" notification was sent. Claude Code's own `StopFailure`
+  payload already carries a structured `error` field and a
+  `last_assistant_message` fallback text, sourced from the hook's stdin JSON
+  with no transcript read involved — these are now the primary detection
+  source (see "Changed" above), with a 200ms transcript retry as a fallback,
+  so a genuine rate limit can no longer be misclassified as a generic error.
+  See
   [docs/lessons-learned/0002-stopfailure-transcript-write-race.md](docs/lessons-learned/0002-stopfailure-transcript-write-race.md).
+- A per-model usage-credits error (e.g. Fable 5 without usage credits
+  enabled) was misclassified as an account-level usage limit, because Claude
+  Code tags both with the same envelope-level `error == "rate_limit"` field.
+  Detection now also checks the structured `errorDetails`/`error_details`
+  body and excludes `error_code == "credits_required"`, on both the
+  transcript and `StopFailure`-payload paths. See
+  [docs/lessons-learned/0003-model-credits-error-misclassified.md](docs/lessons-learned/0003-model-credits-error-misclassified.md).
+- The reset-ping sleeper computed the reset time in the host machine's local
+  timezone, ignoring the timezone Claude Code embeds in the reset text (e.g.
+  `(Asia/Hong_Kong)`). If the host's timezone ever differs from the account's
+  reported reset timezone, this silently fired the reset notification at the
+  wrong wall-clock time. `parse_reset` now resolves and uses the reported
+  timezone via `zoneinfo` when available, falling back to host local time
+  only when the zone name is absent or unresolvable.
 
 ## [0.3.0] - 2026-07-17
 
