@@ -177,19 +177,26 @@ def test_cap_is_at_least_one_week():
 
 
 def test_parse_reset_returns_next_local_occurrence():
-    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()  # 10:00 local
+    # The text names Asia/Hong_Kong explicitly, so both `now` and the
+    # assertion are anchored to that zone -- this must hold regardless of
+    # whatever timezone the test runner itself is in (e.g. CI's UTC hosts).
+    from zoneinfo import ZoneInfo
+    hkt = ZoneInfo("Asia/Hong_Kong")
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0, tzinfo=hkt).timestamp()  # 10:00 HKT
     got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
     assert got is not None
-    dt = datetime.datetime.fromtimestamp(got)
+    dt = datetime.datetime.fromtimestamp(got, hkt)
     assert (dt.hour, dt.minute) == (21, 0)
     assert now < got <= now + 24 * 3600
 
 
 def test_parse_reset_rolls_to_tomorrow_when_past():
-    now = datetime.datetime(2026, 7, 21, 23, 30, 0).timestamp()  # 23:30 local
+    from zoneinfo import ZoneInfo
+    hkt = ZoneInfo("Asia/Hong_Kong")
+    now = datetime.datetime(2026, 7, 21, 23, 30, 0, tzinfo=hkt).timestamp()  # 23:30 HKT
     got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
     assert got is not None
-    dt = datetime.datetime.fromtimestamp(got)
+    dt = datetime.datetime.fromtimestamp(got, hkt)
     assert (dt.hour, dt.minute) == (21, 0)
     assert dt.date() == datetime.date(2026, 7, 22)  # next day
 
