@@ -3,6 +3,8 @@ import json
 import os
 import stat
 
+import pytest
+
 from claude_code_notify import usagelimit
 
 
@@ -180,8 +182,9 @@ def test_parse_reset_returns_next_local_occurrence():
     # The text names Asia/Hong_Kong explicitly, so both `now` and the
     # assertion are anchored to that zone -- this must hold regardless of
     # whatever timezone the test runner itself is in (e.g. CI's UTC hosts).
-    from zoneinfo import ZoneInfo
-    hkt = ZoneInfo("Asia/Hong_Kong")
+    # Skipped on py<3.9 without zoneinfo, same as the production fallback.
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
     now = datetime.datetime(2026, 7, 21, 10, 0, 0, tzinfo=hkt).timestamp()  # 10:00 HKT
     got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
     assert got is not None
@@ -191,8 +194,8 @@ def test_parse_reset_returns_next_local_occurrence():
 
 
 def test_parse_reset_rolls_to_tomorrow_when_past():
-    from zoneinfo import ZoneInfo
-    hkt = ZoneInfo("Asia/Hong_Kong")
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
     now = datetime.datetime(2026, 7, 21, 23, 30, 0, tzinfo=hkt).timestamp()  # 23:30 HKT
     got = usagelimit.parse_reset("resets 9pm (Asia/Hong_Kong)", now)
     assert got is not None
@@ -224,8 +227,8 @@ def test_parse_reset_no_match_is_none():
 
 
 def test_parse_reset_uses_reported_timezone_not_host():
-    from zoneinfo import ZoneInfo
-    hkt = ZoneInfo("Asia/Hong_Kong")
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
     now = datetime.datetime(2026, 7, 22, 3, 0, 0, tzinfo=hkt).timestamp()  # 03:00 HKT
     got = usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now)
     assert got is not None
@@ -237,11 +240,11 @@ def test_parse_reset_uses_reported_timezone_not_host():
 def test_parse_reset_reported_timezone_independent_of_host_offset():
     # now is HKT 03:00 (UTC 2026-07-21 19:00) expressed as a UTC epoch, so
     # this test's result cannot depend on whatever tz the test runner is in.
-    from zoneinfo import ZoneInfo
+    zoneinfo = pytest.importorskip("zoneinfo")
     now = datetime.datetime(2026, 7, 21, 19, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
     got = usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now)
     expected = datetime.datetime(2026, 7, 22, 5, 20, 0,
-                                  tzinfo=ZoneInfo("Asia/Hong_Kong")).timestamp()
+                                  tzinfo=zoneinfo.ZoneInfo("Asia/Hong_Kong")).timestamp()
     assert got == expected
 
 
