@@ -171,6 +171,36 @@ def test_parse_reset_no_match_is_none():
     assert usagelimit.parse_reset("nothing useful here", now) is None
 
 
+def test_parse_reset_uses_reported_timezone_not_host():
+    from zoneinfo import ZoneInfo
+    hkt = ZoneInfo("Asia/Hong_Kong")
+    now = datetime.datetime(2026, 7, 22, 3, 0, 0, tzinfo=hkt).timestamp()  # 03:00 HKT
+    got = usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now)
+    assert got is not None
+    dt = datetime.datetime.fromtimestamp(got, hkt)
+    assert (dt.hour, dt.minute) == (5, 20)
+    assert dt.date() == datetime.date(2026, 7, 22)
+
+
+def test_parse_reset_reported_timezone_independent_of_host_offset():
+    # now is HKT 03:00 (UTC 2026-07-21 19:00) expressed as a UTC epoch, so
+    # this test's result cannot depend on whatever tz the test runner is in.
+    from zoneinfo import ZoneInfo
+    now = datetime.datetime(2026, 7, 21, 19, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
+    got = usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now)
+    expected = datetime.datetime(2026, 7, 22, 5, 20, 0,
+                                  tzinfo=ZoneInfo("Asia/Hong_Kong")).timestamp()
+    assert got == expected
+
+
+def test_parse_reset_falls_back_to_host_tz_when_zone_unresolvable():
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    got = usagelimit.parse_reset("resets 9pm (Nowhere/Fake)", now)
+    assert got is not None
+    dt = datetime.datetime.fromtimestamp(got)
+    assert (dt.hour, dt.minute) == (21, 0)
+
+
 def test_parse_reset_handles_noon_and_midnight():
     # Test noon (12pm): hour=12, 12%12=0, +12=12 (correct)
     now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()  # 10:00am, before noon

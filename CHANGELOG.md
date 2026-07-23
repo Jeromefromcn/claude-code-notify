@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- The reset-ping sleeper computed the reset time in the host machine's local
+  timezone, ignoring the timezone Claude Code embeds in the reset text (e.g.
+  `(Asia/Hong_Kong)`). If the host's timezone ever differs from the account's
+  reported reset timezone, this silently fired the reset notification at the
+  wrong wall-clock time. `parse_reset` now resolves and uses the reported
+  timezone via `zoneinfo` when available, falling back to host local time
+  only when the zone name is absent or unresolvable.
+
 ## [0.4.0] - 2026-07-22
 
 ### Added

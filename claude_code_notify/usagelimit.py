@@ -4,6 +4,11 @@ import json
 import os
 import re
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - py<3.9 without the tzdata backport
+    ZoneInfo = None
+
 
 def _message_text(envelope):
     message = envelope.get("message") or {}
@@ -67,13 +72,30 @@ def window_key(reset_text, target_epoch=None):
 CAP_SECONDS = 8 * 24 * 3600
 
 
-_RESET_RE = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
+_RESET_RE = re.compile(
+    r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.IGNORECASE)
+
+
+def _resolve_tz(tz_name):
+    """Best-effort IANA zone lookup for the tz name Claude Code embeds in the
+    reset text (e.g. "Asia/Hong_Kong"). None (host local time) if the name is
+    absent, unrecognized, or zoneinfo isn't available — identical to prior
+    behavior, so this is a pure enhancement, never a regression."""
+    if not tz_name or ZoneInfo is None:
+        return None
+    try:
+        return ZoneInfo(tz_name.strip())
+    except Exception:
+        return None
 
 
 def parse_reset(reset_text, now):
-    """Best-effort next-occurrence epoch of the reported local wall-clock reset
-    time. Returns None on any unparseable text or out-of-range result. Only the
-    known session format (h[:mm]am/pm) is handled; weekly formats return None."""
+    """Best-effort next-occurrence epoch of the reported wall-clock reset
+    time, computed in the timezone named in the text (e.g. "(Asia/Hong_Kong)")
+    when present and resolvable — not the host machine's timezone, which may
+    differ. Returns None on any unparseable text or out-of-range result. Only
+    the known session format (h[:mm]am/pm) is handled; weekly formats return
+    None."""
     match = _RESET_RE.search(reset_text or "")
     if not match:
         return None
@@ -84,8 +106,9 @@ def parse_reset(reset_text, now):
     hour = hour % 12
     if match.group(3).lower() == "pm":
         hour += 12
+    tz = _resolve_tz(match.group(4))
     try:
-        base = datetime.datetime.fromtimestamp(now)
+        base = datetime.datetime.fromtimestamp(now, tz)
         target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
         epoch = target.timestamp()
         if epoch <= now:
