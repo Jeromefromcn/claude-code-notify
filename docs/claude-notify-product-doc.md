@@ -222,7 +222,8 @@ set false for hit-only, zero background processes). At the reported reset time
 a one-shot "usage limit reset" broadcast is delivered by a transient,
 single-instance, detached background process ("sleeper") spawned from the hook:
 best-effort parse of the reset moment in the timezone named in the reset text
-(e.g. `(Asia/Hong_Kong)`) when resolvable, else the host machine's local time,
+(e.g. `(Asia/Hong_Kong)`) when resolvable, else the host machine's local time
+(see [lessons learned 0005](lessons-learned/0005-reset-timezone-and-ci-exposed-test-assumptions.md)),
 a wall-clock wait loop capped
 at 8 days, no secrets on its argv, a PID file so uninstall can terminate it, and
 **no fallback** if it is killed (miss-is-a-miss). The weekly-limit reset text

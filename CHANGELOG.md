@@ -60,7 +60,8 @@ All notable changes to this project are documented here. Format follows
   reported reset timezone, this silently fired the reset notification at the
   wrong wall-clock time. `parse_reset` now resolves and uses the reported
   timezone via `zoneinfo` when available, falling back to host local time
-  only when the zone name is absent or unresolvable.
+  only when the zone name is absent or unresolvable. See
+  [docs/lessons-learned/0005-reset-timezone-and-ci-exposed-test-assumptions.md](docs/lessons-learned/0005-reset-timezone-and-ci-exposed-test-assumptions.md).
 
 ## [0.3.0] - 2026-07-17
 
