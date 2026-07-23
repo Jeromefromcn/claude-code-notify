@@ -43,6 +43,51 @@ def test_stale_rate_limit_before_normal_turn_is_ignored(tmp_path):
     assert usagelimit.latest_usage_limit(path) is None
 
 
+_FABLE5_ERROR_DETAILS = (
+    '429 {"type":"error","error":{"type":"rate_limit_error",'
+    '"message":"Usage credits are required for this model.",'
+    '"details":{"error_code":"credits_required","model":"claude-fable-5",'
+    '"disabled_reason":"org_level_disabled"}},'
+    '"request_id":"req_test"}'
+)
+
+
+def test_model_credits_error_is_not_a_usage_limit(tmp_path):
+    path = _write(tmp_path, [{
+        "type": "assistant", "isSidechain": False, "isApiErrorMessage": True,
+        "error": "rate_limit", "apiErrorStatus": 429,
+        "errorDetails": _FABLE5_ERROR_DETAILS,
+        "message": {"content": [{
+            "type": "text",
+            "text": "Fable 5 requires usage credits. Run /usage-credits to continue "
+                    "or switch models with /model."}]},
+    }])
+    assert usagelimit.latest_usage_limit(path) is None
+
+
+def test_genuine_rate_limit_without_error_details_still_detected(tmp_path):
+    path = _write(tmp_path, [_rate_limit()])
+    assert usagelimit.latest_usage_limit(path) is not None
+
+
+def test_is_model_credits_error_true_for_fable5_style_body():
+    assert usagelimit.is_model_credits_error(_FABLE5_ERROR_DETAILS) is True
+
+
+def test_is_model_credits_error_false_when_absent():
+    assert usagelimit.is_model_credits_error(None) is False
+
+
+def test_is_model_credits_error_false_for_unrelated_error_code():
+    body = '429 {"error":{"details":{"error_code":"overloaded_error"}}}'
+    assert usagelimit.is_model_credits_error(body) is False
+
+
+def test_is_model_credits_error_false_for_garbage():
+    assert usagelimit.is_model_credits_error("not json at all") is False
+    assert usagelimit.is_model_credits_error(12345) is False
+
+
 def test_auth_error_is_not_a_usage_limit(tmp_path):
     path = _write(tmp_path, [
         {"type": "assistant", "isSidechain": False, "isApiErrorMessage": True,

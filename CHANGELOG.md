@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Fixed
+- A per-model usage-credits error (e.g. Fable 5 without usage credits
+  enabled) was misclassified as an account-level usage limit, because Claude
+  Code tags both with the same envelope-level `error == "rate_limit"` field.
+  Detection now also checks the structured `errorDetails`/`error_details`
+  body and excludes `error_code == "credits_required"`, on both the
+  transcript and `StopFailure`-payload paths. See
+  [docs/lessons-learned/0003-model-credits-error-misclassified.md](docs/lessons-learned/0003-model-credits-error-misclassified.md).
 - The reset-ping sleeper computed the reset time in the host machine's local
   timezone, ignoring the timezone Claude Code embeds in the reset text (e.g.
   `(Asia/Hong_Kong)`). If the host's timezone ever differs from the account's

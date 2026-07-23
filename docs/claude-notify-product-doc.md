@@ -195,10 +195,15 @@ not consulted).
 
 **Detection** is envelope-level only — the transcript's terminal assistant
 entry carrying `isApiErrorMessage == true` and `error == "rate_limit"` (both
-session and weekly limits). No text is matched to detect; the reset text is
-passed through as the message body and used as an opaque per-window dedup key.
-When detected, the misleading normal "finished"/"error" notification is
-suppressed for that turn.
+session and weekly limits), and *not* carrying a structured `errorDetails`
+body whose `error.details.error_code == "credits_required"` — Claude Code
+reuses `error == "rate_limit"` for per-model usage-credits gates (e.g. Fable 5
+without credits enabled) too, which are unrelated to the account's
+subscription usage limit; see
+[lessons learned 0003](lessons-learned/0003-model-credits-error-misclassified.md).
+No text is matched to detect; the reset text is passed through as the message
+body and used as an opaque per-window dedup key. When detected, the misleading
+normal "finished"/"error" notification is suppressed for that turn.
 
 `StopFailure` can fire before Claude Code finishes flushing the terminal
 rate-limit envelope to the transcript, so the `StopFailure` path (only) retries

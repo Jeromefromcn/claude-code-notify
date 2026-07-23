@@ -661,6 +661,31 @@ def test_stop_failure_falls_back_to_payload_error_when_transcript_unavailable(tm
     assert "resets 9pm" in sent[0]
 
 
+def test_stop_failure_payload_fallback_excludes_model_credits_error(tmp_path, monkeypatch):
+    # Claude Code tags a per-model credits gate (e.g. Fable 5 without usage
+    # credits enabled) with the same error="rate_limit" StopFailure uses for
+    # a genuine account usage limit -- the fallback must not misclassify it
+    # just because the transcript read came up empty.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    monkeypatch.setattr(hooks, "_sleep", lambda s: None)
+    monkeypatch.setattr(hooks.usagelimit, "latest_usage_limit", lambda path: None)
+    transcript = _write_transcript(tmp_path, [_rate_limit_line()])
+    payload = {
+        "session_id": "f4", "transcript_path": transcript, "cwd": "/w",
+        "error": "rate_limit",
+        "error_details": '429 {"error":{"details":{"error_code":"credits_required",'
+                          '"model":"claude-fable-5"}}}',
+        "last_assistant_message": "Fable 5 requires usage credits. Run /usage-credits "
+                                   "to continue or switch models with /model.",
+    }
+    assert hooks.run("stop_failure", json.dumps(payload)) == 0
+    assert len(sent) == 1
+    assert "stopped with error" in sent[0]
+
+
 def test_stop_failure_falls_back_to_generic_text_when_payload_message_absent_too(tmp_path, monkeypatch):
     # last_assistant_message is documented as optional even when error is
     # present -- still must not crash or fall through to the generic path.

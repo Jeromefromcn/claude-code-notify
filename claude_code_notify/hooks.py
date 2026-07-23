@@ -95,13 +95,17 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
         _sleep(delay)
         retries_used += 1
         reset_text = usagelimit.latest_usage_limit(transcript)
-    if reset_text is None and payload.get("error") == "rate_limit":
+    if reset_text is None and payload.get("error") == "rate_limit" and \
+            not usagelimit.is_model_credits_error(payload.get("error_details")):
         # StopFailure's own payload already says this was a rate limit — no
         # transcript read involved, so no race, unlike the check above. Used
         # as a fallback classification (not the primary source) because
         # last_assistant_message's exact content isn't yet confirmed to
         # always carry a parseable reset time the way transcript text does;
         # see docs/lessons-learned/0002-stopfailure-transcript-write-race.md.
+        # error_details is checked to exclude per-model credit gates (e.g.
+        # Fable 5) that Claude Code also tags error="rate_limit" — see
+        # docs/lessons-learned/0003-model-credits-error-misclassified.md.
         reset_text = payload.get("last_assistant_message") or "usage limit reached"
         _debug(config, "usage-limit: transcript unavailable — classified via payload error field")
     if reset_text is None:

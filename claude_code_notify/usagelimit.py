@@ -26,9 +26,41 @@ def _message_text(envelope):
     return ""
 
 
+def _error_body(error_details):
+    """Best-effort JSON body from a raw API error-detail value: a dict as-is,
+    or a string like '429 {"type":"error",...}' (Claude Code's on-disk and
+    payload representations both use this "<status> <json>" form). Returns {}
+    on anything unparseable — this is advisory data only, never load-bearing
+    for the rate_limit/isApiErrorMessage classification itself."""
+    if isinstance(error_details, dict):
+        return error_details
+    if not isinstance(error_details, str):
+        return {}
+    brace = error_details.find("{")
+    if brace == -1:
+        return {}
+    try:
+        return json.loads(error_details[brace:])
+    except ValueError:
+        return {}
+
+
+def is_model_credits_error(error_details):
+    """True when the structured error body identifies a per-model usage-
+    credits gate (e.g. a non-subscription model like Fable 5 without credits
+    enabled) rather than an account-level session/weekly usage limit. Both
+    the transcript envelope's `errorDetails` and StopFailure payload's
+    `error_details` carry the same raw API error body; genuine account usage
+    limits never populate this field."""
+    details = _error_body(error_details).get("error", {})
+    details = details.get("details", {}) if isinstance(details, dict) else {}
+    return isinstance(details, dict) and details.get("error_code") == "credits_required"
+
+
 def latest_usage_limit(path):
     """Return the reset text iff the transcript's last assistant (non-sidechain)
-    envelope is a rate_limit API error, else None. Envelope-level only."""
+    envelope is a rate_limit API error and not a per-model credits gate
+    (see is_model_credits_error), else None. Envelope-level only."""
     last_assistant = None
     try:
         with open(path, "rb") as fh:
@@ -46,7 +78,8 @@ def latest_usage_limit(path):
     if last_assistant is None:
         return None
     if last_assistant.get("isApiErrorMessage") is True and \
-            last_assistant.get("error") == "rate_limit":
+            last_assistant.get("error") == "rate_limit" and \
+            not is_model_credits_error(last_assistant.get("errorDetails")):
         text = _message_text(last_assistant).strip()
         return text or None
     return None
