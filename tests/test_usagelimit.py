@@ -23,8 +23,25 @@ def _rate_limit(text="You've hit your session limit · resets 9pm (Asia/Hong_Kon
 
 def test_detects_rate_limit_as_last_assistant(tmp_path):
     path = _write(tmp_path, [_rate_limit()])
-    assert usagelimit.latest_usage_limit(path) == \
+    assert usagelimit.latest_usage_limit(path).text == \
         "You've hit your session limit · resets 9pm (Asia/Hong_Kong)"
+
+
+def test_latest_usage_limit_returns_error_timestamp(tmp_path):
+    env = _rate_limit()
+    env["timestamp"] = "2026-07-22T18:14:00.000Z"
+    path = _write(tmp_path, [env])
+    result = usagelimit.latest_usage_limit(path)
+    assert result is not None
+    expected = datetime.datetime(2026, 7, 22, 18, 14, 0,
+                                 tzinfo=datetime.timezone.utc).timestamp()
+    assert result.at == expected
+
+
+def test_latest_usage_limit_at_none_when_timestamp_missing(tmp_path):
+    result = usagelimit.latest_usage_limit(_write(tmp_path, [_rate_limit()]))
+    assert result is not None
+    assert result.at is None
 
 
 def test_ignores_trailing_non_assistant_lines(tmp_path):
@@ -254,6 +271,49 @@ def test_parse_reset_falls_back_to_host_tz_when_zone_unresolvable():
     assert got is not None
     dt = datetime.datetime.fromtimestamp(got)
     assert (dt.hour, dt.minute) == (21, 0)
+
+
+def test_reset_epoch_anchored_to_hit_time_returns_reset_after_hit():
+    # reset_epoch is the window's stable identity: the first reset strictly
+    # after the moment the limit was hit, regardless of when we read it.
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
+    hit = datetime.datetime(2026, 7, 23, 2, 14, 0, tzinfo=hkt).timestamp()
+    got = usagelimit.reset_epoch("resets 5:20am (Asia/Hong_Kong)", hit)
+    expected = datetime.datetime(2026, 7, 23, 5, 20, 0, tzinfo=hkt).timestamp()
+    assert got == expected
+
+
+def test_reset_epoch_unparseable_text_is_none():
+    assert usagelimit.reset_epoch("You've hit your weekly limit · resets Monday", 0.0) is None
+
+
+def test_parse_reset_stale_hit_returns_none_when_reset_already_passed():
+    # Limit hit at 02:14 (reset 05:20); by the time we re-read the same stale
+    # envelope at 13:28 that reset is in the past. Anchored to the hit time it
+    # must NOT be rolled forward to a spurious next-day 05:20 -- return None.
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
+    hit = datetime.datetime(2026, 7, 23, 2, 14, 0, tzinfo=hkt).timestamp()
+    now = datetime.datetime(2026, 7, 23, 13, 28, 0, tzinfo=hkt).timestamp()
+    assert usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now, anchor=hit) is None
+
+
+def test_parse_reset_fresh_hit_with_anchor_schedules_future_reset():
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
+    hit = datetime.datetime(2026, 7, 23, 2, 14, 0, tzinfo=hkt).timestamp()
+    now = datetime.datetime(2026, 7, 23, 2, 20, 0, tzinfo=hkt).timestamp()
+    got = usagelimit.parse_reset("resets 5:20am (Asia/Hong_Kong)", now, anchor=hit)
+    expected = datetime.datetime(2026, 7, 23, 5, 20, 0, tzinfo=hkt).timestamp()
+    assert got == expected
+
+
+def test_parse_reset_anchor_defaults_to_now():
+    # Omitting anchor reproduces the pre-change behavior exactly.
+    now = datetime.datetime(2026, 7, 21, 10, 0, 0).timestamp()
+    assert usagelimit.parse_reset("resets 9pm", now) == \
+        usagelimit.parse_reset("resets 9pm", now, anchor=now)
 
 
 def test_parse_reset_handles_noon_and_midnight():
