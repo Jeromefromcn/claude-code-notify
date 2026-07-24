@@ -106,19 +106,35 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     payload_is_rate_limit = payload.get("error") == "rate_limit" and \
         not usagelimit.is_model_credits_error(payload.get("error_details"))
     reset_text = None
+    error_at = None
     retries_used = 0
     if payload_is_rate_limit and payload.get("last_assistant_message"):
         reset_text = payload["last_assistant_message"]
         _debug(config, "usage-limit: detected via payload fields — no transcript read needed")
     else:
-        reset_text = usagelimit.latest_usage_limit(transcript)
+        result = usagelimit.latest_usage_limit(transcript)
         for delay in retry_delays:
-            if reset_text is not None:
+            if result is not None:
                 break
             _sleep(delay)
             retries_used += 1
-            reset_text = usagelimit.latest_usage_limit(transcript)
-        if reset_text is None and payload_is_rate_limit:
+            result = usagelimit.latest_usage_limit(transcript)
+        if result is not None:
+            # A rate-limit envelope is the transcript's last assistant entry.
+            # On a normal Stop this can be a *stale* limit from an earlier turn
+            # that the current turn's normal reply simply hasn't finished
+            # flushing over yet (docs/lessons-learned/0002 write race, 0005).
+            # Only treat it as a fresh hit if it belongs to the current turn:
+            # a limit hit before the current turn's own user message predates
+            # this turn and must not resurrect an old, already-handled hit.
+            start = _parse_ts(turn_start_timestamp(transcript))
+            if result.at is not None and start is not None and result.at < start:
+                _debug(config, "usage-limit: last transcript error predates the current "
+                                "turn — stale, treating as normal completion")
+                return False
+            reset_text = result.text
+            error_at = result.at
+        elif payload_is_rate_limit:
             # error is rate_limit but last_assistant_message was absent and
             # the transcript came up empty too — still classify as a hit,
             # just without a specific, schedulable reset time.
@@ -133,8 +149,12 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
         _debug(config, f"usage-limit: detected after {retries_used} retry(ies) (transcript={transcript})")
     cwd = payload.get("cwd", "")
     now = _now()
-    target = usagelimit.parse_reset(reset_text, now)
-    key = usagelimit.window_key(reset_text, target)
+    # Anchor the reset-window computation to when the limit was actually hit
+    # (error_at) when known — not to read time (now). Payload-path hits arrive
+    # essentially at hit time, so now is the right anchor there.
+    anchor = error_at if error_at is not None else now
+    target = usagelimit.parse_reset(reset_text, now, anchor=anchor)
+    key = usagelimit.window_key(reset_text, usagelimit.reset_epoch(reset_text, anchor))
     usagelimit.gc(config.base_dir, now)
     if usagelimit.claim_hit(config.base_dir, key):
         message = notifier.build_message("usage-limit", cwd, _when(), title=reset_text)

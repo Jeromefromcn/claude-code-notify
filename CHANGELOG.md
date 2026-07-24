@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-07-24
+
+### Fixed
+- A phantom `usage-limit-reset` notification could fire ~a day late for a reset
+  that never happened. Resuming a session that had previously hit a usage limit
+  and letting the new turn finish normally could, under the transcript write
+  race, leave the old rate-limit envelope as the transcript's apparent last
+  entry on the plain `Stop` path — re-detecting a resolved limit as a fresh hit.
+  `parse_reset` then anchored "next reset time" to *read time* rather than *hit
+  time*, rolling the already-past reset forward to a spurious next-day window
+  (which also dodged dedup, since the window key folds in the reset date). Two
+  fixes: (1) a rate-limit envelope whose timestamp predates the current turn's
+  start is treated as a normal completion, not a hit; (2) the reset-window
+  computation is anchored to when the limit was actually hit (the envelope's own
+  timestamp), so a stale re-read maps to the same window and dedups instead of
+  inventing a new one. See
+  [docs/lessons-learned/0006-stale-reread-wallclock-anchored-reset.md](docs/lessons-learned/0006-stale-reread-wallclock-anchored-reset.md).
+
 ## [0.4.0] - 2026-07-23
 
 ### Added

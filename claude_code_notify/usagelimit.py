@@ -1,3 +1,4 @@
+import collections
 import datetime
 import hashlib
 import json
@@ -8,6 +9,26 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - py<3.9 without the tzdata backport
     ZoneInfo = None
+
+
+# text: the reset-time message; at: epoch of the error envelope's own
+# `timestamp` (when the limit was actually hit), or None if the envelope
+# carries no parseable timestamp. `at` anchors the reset-window computation
+# to when the limit occurred rather than to when we happen to read the
+# transcript, so a stale re-read of an old limit can't be mistaken for a
+# fresh hit (docs/lessons-learned/0005).
+UsageLimit = collections.namedtuple("UsageLimit", ["text", "at"])
+
+
+def _parse_ts(ts):
+    """Epoch from an ISO-8601 transcript timestamp (e.g. the trailing 'Z'
+    UTC form Claude Code writes). None on anything unparseable."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
 
 
 def _message_text(envelope):
@@ -58,9 +79,11 @@ def is_model_credits_error(error_details):
 
 
 def latest_usage_limit(path):
-    """Return the reset text iff the transcript's last assistant (non-sidechain)
-    envelope is a rate_limit API error and not a per-model credits gate
-    (see is_model_credits_error), else None. Envelope-level only."""
+    """Return a UsageLimit(text, at) iff the transcript's last assistant
+    (non-sidechain) envelope is a rate_limit API error and not a per-model
+    credits gate (see is_model_credits_error), else None. `at` is the epoch of
+    that envelope's own `timestamp` (when the limit was hit), or None if it
+    carries no parseable timestamp. Envelope-level only."""
     last_assistant = None
     try:
         with open(path, "rb") as fh:
@@ -81,7 +104,9 @@ def latest_usage_limit(path):
             last_assistant.get("error") == "rate_limit" and \
             not is_model_credits_error(last_assistant.get("errorDetails")):
         text = _message_text(last_assistant).strip()
-        return text or None
+        if not text:
+            return None
+        return UsageLimit(text, _parse_ts(last_assistant.get("timestamp")))
     return None
 
 
@@ -122,13 +147,11 @@ def _resolve_tz(tz_name):
         return None
 
 
-def parse_reset(reset_text, now):
-    """Best-effort next-occurrence epoch of the reported wall-clock reset
-    time, computed in the timezone named in the text (e.g. "(Asia/Hong_Kong)")
-    when present and resolvable — not the host machine's timezone, which may
-    differ. Returns None on any unparseable text or out-of-range result. Only
-    the known session format (h[:mm]am/pm) is handled; weekly formats return
-    None."""
+def _reset_hm(reset_text):
+    """Parse the reported reset time into (hour_24, minute, tzinfo|None), or
+    None when the text carries no recognizable h[:mm]am/pm token. The tz is
+    the zone named in the text (e.g. "(Asia/Hong_Kong)") when present and
+    resolvable, else None (host local time)."""
     match = _RESET_RE.search(reset_text or "")
     if not match:
         return None
@@ -139,14 +162,41 @@ def parse_reset(reset_text, now):
     hour = hour % 12
     if match.group(3).lower() == "pm":
         hour += 12
-    tz = _resolve_tz(match.group(4))
+    return hour, minute, _resolve_tz(match.group(4))
+
+
+def reset_epoch(reset_text, anchor):
+    """Epoch of the first reported reset time strictly after `anchor` — the
+    moment the limit was hit — computed in the timezone named in the text.
+    This is the window's stable identity: it depends only on *when the limit
+    occurred*, never on when we happen to read it, so a stale re-read of the
+    same limit maps to the same window. Returns None on unparseable text
+    (e.g. weekly-limit format) or an out-of-range date computation."""
+    hm = _reset_hm(reset_text)
+    if hm is None:
+        return None
+    hour, minute, tz = hm
     try:
-        base = datetime.datetime.fromtimestamp(now, tz)
+        base = datetime.datetime.fromtimestamp(anchor, tz)
         target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
         epoch = target.timestamp()
-        if epoch <= now:
+        if epoch <= anchor:
             epoch = (target + datetime.timedelta(days=1)).timestamp()
     except (OverflowError, OSError, ValueError):
+        return None
+    return epoch
+
+
+def parse_reset(reset_text, now, anchor=None):
+    """Best-effort *schedulable* reset epoch: the next reset occurrence after
+    the limit was hit (`anchor`, defaulting to `now`), but only if it is still
+    in the future relative to `now` and within CAP_SECONDS. Anchoring the
+    roll-forward to when the limit was hit — not to read time — means a stale
+    limit whose reset has already passed returns None instead of being rolled
+    forward to a spurious next-day occurrence (docs/lessons-learned/0005).
+    Returns None on unparseable text or an out-of-range result."""
+    epoch = reset_epoch(reset_text, now if anchor is None else anchor)
+    if epoch is None:
         return None
     if epoch <= now or epoch > now + CAP_SECONDS:
         return None
