@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-code-notify"
-version = "0.4.0"
+version = "0.4.1"
 description = "Telegram notifications from Claude Code hooks: turn finished, blocked, or errored."
 readme = "README.md"
 license = { text = "MIT" }

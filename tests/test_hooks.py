@@ -315,6 +315,20 @@ def _rate_limit_line(text="You've hit your session limit · resets 9pm (Asia/Hon
                     "content": [{"type": "text", "text": text}]}})
 
 
+def _rate_limit_line_at(ts, text="You've hit your session limit · resets 5:20am (Asia/Hong_Kong)"):
+    return json.dumps({
+        "type": "assistant", "isSidechain": False, "isApiErrorMessage": True,
+        "error": "rate_limit", "apiErrorStatus": 429, "timestamp": ts,
+        "message": {"model": "<synthetic>",
+                    "content": [{"type": "text", "text": text}]}})
+
+
+def _user_turn_line(ts, text="go on"):
+    return json.dumps({
+        "type": "user", "isSidechain": False, "timestamp": ts,
+        "message": {"content": text}})
+
+
 def _usage_config(tmp_path, extra=""):
     (tmp_path / "config.env").write_text(
         "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\n"
@@ -736,3 +750,54 @@ def test_stop_failure_prefers_payload_text_over_transcript_when_both_present(tmp
     assert len(sent) == 1
     assert "API Error: Rate limit reached" in sent[0]
     assert "resets 3pm" not in sent[0]
+
+
+def test_stop_ignores_stale_rate_limit_predating_current_turn(tmp_path, monkeypatch):
+    # The 05:20 phantom-reset bug: a session that hit a limit yesterday is
+    # resumed today; the current turn finishes normally, but its reply hasn't
+    # flushed yet, so the transcript's last assistant entry is still the OLD
+    # rate-limit envelope. It predates the current turn's user message, so it
+    # must be treated as a normal completion -- not re-detected as a fresh hit.
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    broadcasts = []
+    monkeypatch.setattr(hooks.broadcast, "send_all", lambda c, t: broadcasts.append(t) or 0)
+    transcript = _write_transcript(tmp_path, [
+        _rate_limit_line_at("2026-07-22T18:14:00.000Z"),   # yesterday's limit
+        _user_turn_line("2026-07-23T05:27:15.000Z"),       # today's "go on"
+    ])
+    payload = {"session_id": "st1", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert broadcasts == []                              # no usage-limit broadcast
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code finished")    # normal completion
+
+
+def test_stop_reread_of_same_limit_maps_to_same_window(tmp_path, monkeypatch):
+    # A limit hit at 02:14 (reset 05:20) must map to the SAME window whether we
+    # read it at 02:20 or re-read the identical stale envelope hours later. The
+    # window key is anchored to when the limit was hit, not to read time, so the
+    # re-read dedups against the original hit instead of rolling the reset to a
+    # spurious next-day window and re-broadcasting. No turn-start line here, so
+    # this isolates the window-key anchoring from the turn-correlation guard.
+    zoneinfo = pytest.importorskip("zoneinfo")
+    hkt = zoneinfo.ZoneInfo("Asia/Hong_Kong")
+    _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    broadcasts = []
+    monkeypatch.setattr(hooks.broadcast, "send_all", lambda c, t: broadcasts.append(t) or 0)
+    transcript = _write_transcript(tmp_path, [
+        _rate_limit_line_at("2026-07-22T18:14:00.000Z"),   # 02:14 HKT, resets 05:20
+    ])
+    payload = {"session_id": "st2", "transcript_path": transcript, "cwd": "/w"}
+    monkeypatch.setattr(hooks, "_now",
+                        lambda: datetime.datetime(2026, 7, 23, 2, 20, 0, tzinfo=hkt).timestamp())
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(broadcasts) == 1                          # first hit broadcasts
+    monkeypatch.setattr(hooks, "_now",
+                        lambda: datetime.datetime(2026, 7, 23, 13, 28, 0, tzinfo=hkt).timestamp())
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(broadcasts) == 1                          # re-read dedups: no 2nd broadcast
