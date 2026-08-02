@@ -146,3 +146,37 @@ def test_env_overrides_usage_limit(tmp_path):
     )
     c = cfg.load(environ={"NOTIFY_USAGE_LIMIT": "1"}, base=tmp_path)
     assert c.usage_limit is True
+
+
+def test_load_pending_stale_seconds_default(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.pending_stale_seconds == 14400
+
+
+def test_load_pending_stale_seconds_from_file(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+        "NOTIFY_PENDING_STALE_SECONDS=60\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.pending_stale_seconds == 60
+
+
+def test_load_pending_stale_seconds_zero_disables(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+        "NOTIFY_PENDING_STALE_SECONDS=0\n"
+    )
+    c = cfg.load(environ={}, base=tmp_path)
+    assert c.pending_stale_seconds is None
+
+
+def test_env_overrides_pending_stale_seconds(tmp_path):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_CHAT_ID=999\n"
+    )
+    c = cfg.load(environ={"NOTIFY_PENDING_STALE_SECONDS": "30"}, base=tmp_path)
+    assert c.pending_stale_seconds == 30

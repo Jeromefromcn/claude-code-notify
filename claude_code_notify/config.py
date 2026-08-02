@@ -20,6 +20,7 @@ class Config:
     routes: list = field(default_factory=list)
     usage_limit: bool = False
     usage_limit_reset: bool = True
+    pending_stale_seconds: int | None = 14400
 
 
 def default_base_dir(environ=None):
@@ -85,7 +86,8 @@ def load(environ=None, base=None):
         merged.update(parse_env_file(cfg_file.read_text()))
     for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_API_BASE",
                 "NOTIFY_RATELIMIT_SECONDS", "NOTIFY_DEBUG",
-                "NOTIFY_USAGE_LIMIT", "NOTIFY_USAGE_LIMIT_RESET"):
+                "NOTIFY_USAGE_LIMIT", "NOTIFY_USAGE_LIMIT_RESET",
+                "NOTIFY_PENDING_STALE_SECONDS"):
         if key in environ:
             merged[key] = environ[key]
 
@@ -99,6 +101,13 @@ def load(environ=None, base=None):
     except ValueError:
         ratelimit_seconds = 120
 
+    try:
+        pending_stale_seconds = int(merged.get("NOTIFY_PENDING_STALE_SECONDS", "14400"))
+    except ValueError:
+        pending_stale_seconds = 14400
+    if pending_stale_seconds <= 0:
+        pending_stale_seconds = None
+
     return Config(
         bot_token=token,
         chat_id=chat_id,
@@ -109,4 +118,5 @@ def load(environ=None, base=None):
         routes=routing.parse_routes(merged),
         usage_limit=_truthy(merged.get("NOTIFY_USAGE_LIMIT", "false")),
         usage_limit_reset=_truthy(merged.get("NOTIFY_USAGE_LIMIT_RESET", "true")),
+        pending_stale_seconds=pending_stale_seconds,
     )
