@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from . import routing
 
@@ -20,7 +21,7 @@ class Config:
     routes: list = field(default_factory=list)
     usage_limit: bool = False
     usage_limit_reset: bool = True
-    pending_stale_seconds: int | None = 14400
+    pending_stale_seconds: Optional[int] = 14400
 
 
 def default_base_dir(environ=None):
