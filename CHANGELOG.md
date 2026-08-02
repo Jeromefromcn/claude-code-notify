@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-08-02
+
+### Added
+- A staleness cutoff for the pending-task tracker. Previously, a single
+  background dispatch (`Agent`, `Bash` with `run_in_background=true`, or
+  `SendMessage`) that never received a matching `<task-notification>` — a
+  crashed shell, a killed process, or a Claude Code bug in emitting the
+  notification — left that launch unresolved forever, permanently blocking
+  `PENDING` from reaching 0 and silencing every future "finished" notification
+  for the rest of that session. `NOTIFY_PENDING_STALE_SECONDS` (default
+  `14400`, i.e. 4 hours; `0` disables) now drops any unresolved launch older
+  than the threshold — or with no known launch timestamp at all — from the
+  pending count and from persisted state on the next `Stop` event. State
+  files written before this change (bare list of launched ids, no
+  timestamps) are read and migrated to the new shape automatically, so an
+  already-stuck session self-heals without manual intervention. See
+  [docs/lessons-learned/0007-unresolved-background-task-blocks-all-future-notifications.md](docs/lessons-learned/0007-unresolved-background-task-blocks-all-future-notifications.md).
+
 ## [0.4.1] - 2026-07-24
 
 ### Fixed

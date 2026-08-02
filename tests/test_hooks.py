@@ -43,8 +43,11 @@ def test_stop_pending_does_not_send(base, tmp_path, monkeypatch):
 def test_stop_completed_sends_once(base, tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:00:30.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
     transcript = _write_transcript(tmp_path, [
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
         '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}',
         '{"type":"ai-title","aiTitle":"Do a thing"}',
     ])
@@ -63,8 +66,11 @@ def test_stop_completed_no_ai_title_omits_title(base, tmp_path, monkeypatch):
     # session — the title segment must simply be omitted, not blank/garbled.
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:00:30.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
     transcript = _write_transcript(tmp_path, [
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
         '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}',
     ])
     payload = {"session_id": "s2b", "transcript_path": transcript, "cwd": "/w"}

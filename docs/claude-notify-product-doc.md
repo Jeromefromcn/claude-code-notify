@@ -102,10 +102,10 @@ Parse at the JSON **envelope** level (entry `type`, `tool_use`/`tool_result` str
 A transcript only grows within a session and past lines never change. Re-parsing the whole file on every Stop is O(file size) per turn. Instead, cache per-session state in `/<state-dir>/<session-id>.state.json`:
 
 ```json
-{ "offset": <bytes read>, "launched": [<ids>], "resolved": [<ids>] }
+{ "offset": <bytes read>, "launched": {<id>: <iso timestamp or null>}, "resolved": [<ids>] }
 ```
 
-Each run seeks past `offset` and parses only newly appended lines — O(growth since last Stop). If the cache is missing, corrupt, or the file is shorter than `offset` (rotated/stale), fall back to a full rescan from offset 0.
+Each run seeks past `offset` and parses only newly appended lines — O(growth since last Stop). If the cache is missing, corrupt, or the file is shorter than `offset` (rotated/stale), fall back to a full rescan from offset 0. A state file written before the staleness cutoff was added stored `"launched"` as a bare list of ids; it's still accepted on load and migrated to the timestamped shape automatically (see `pending_tracker.load_state()`).
 
 ### 4.5 Dedup / rate-limit
 
