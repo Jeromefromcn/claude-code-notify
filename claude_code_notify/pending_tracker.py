@@ -1,6 +1,8 @@
 import json
 import os
+import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from .transcript_parser import parse_events, LaunchEvent, CompletionEvent
 
@@ -8,7 +10,7 @@ from .transcript_parser import parse_events, LaunchEvent, CompletionEvent
 @dataclass
 class State:
     offset: int = 0
-    launched: set = field(default_factory=set)
+    launched: dict = field(default_factory=dict)  # tool_use_id -> ISO8601 launch timestamp, or None
     resolved: set = field(default_factory=set)
 
 
@@ -16,9 +18,18 @@ def load_state(path):
     try:
         with open(path) as fh:
             data = json.load(fh)
+        launched = data.get("launched", {})
+        if isinstance(launched, list):
+            # Pre-staleness state files stored "launched" as a bare list of
+            # ids with no timestamp. Migrate to {id: None} — compute_pending()
+            # treats an unknown launch time as immediately stale once
+            # staleness is enabled, so a session already stuck forever
+            # (docs/lessons-learned/0007) self-heals on its next Stop event
+            # instead of needing manual state-file surgery.
+            launched = {tool_use_id: None for tool_use_id in launched}
         return State(
             int(data.get("offset", 0)),
-            set(data.get("launched", [])),
+            dict(launched),
             set(data.get("resolved", [])),
         )
     except Exception:
@@ -33,7 +44,7 @@ def load_state(path):
 def save_state(path, state):
     payload = {
         "offset": state.offset,
-        "launched": sorted(state.launched),
+        "launched": dict(sorted(state.launched.items())),
         "resolved": sorted(state.resolved),
     }
     parent = os.path.dirname(path)
@@ -46,7 +57,16 @@ def save_state(path, state):
     os.replace(tmp, path)
 
 
-def compute_pending(transcript_path, state_path):
+def _parse_iso(ts):
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, on_stale=None):
     state = load_state(state_path)
     try:
         size = os.path.getsize(transcript_path)
@@ -58,9 +78,22 @@ def compute_pending(transcript_path, state_path):
     events, new_offset = parse_events(transcript_path, state.offset)
     for event in events:
         if isinstance(event, LaunchEvent):
-            state.launched.add(event.tool_use_id)
+            state.launched[event.tool_use_id] = event.timestamp
         elif isinstance(event, CompletionEvent):
             state.resolved.add(event.tool_use_id)
     state.offset = new_offset
+
+    if stale_seconds is not None:
+        cutoff = (now if now is not None else time.time()) - stale_seconds
+        stale_ids = [
+            tool_use_id for tool_use_id, ts in state.launched.items()
+            if tool_use_id not in state.resolved
+            and (_parse_iso(ts) is None or _parse_iso(ts) < cutoff)
+        ]
+        for tool_use_id in stale_ids:
+            del state.launched[tool_use_id]
+        if stale_ids and on_stale is not None:
+            on_stale(stale_ids)
+
     save_state(state_path, state)
-    return len(state.launched - state.resolved)
+    return len(state.launched.keys() - state.resolved)
