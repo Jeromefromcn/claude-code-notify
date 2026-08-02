@@ -173,3 +173,19 @@ def test_turn_start_timestamp_excludes_task_notification_envelope(tmp_path):
     # Task-notification envelope should not be treated as a turn-start,
     # even though it has type="user" and non-empty content.
     assert tp.turn_start_timestamp(str(path)) == "2026-07-11T01:00:00.000Z"
+
+
+def test_launch_event_carries_envelope_timestamp(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-30T16:18:05.840Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
+    )
+    events, _ = tp.parse_events(str(path))
+    assert events == [LaunchEvent("a", "2026-07-30T16:18:05.840Z")]
+
+
+def test_launch_event_timestamp_none_when_envelope_has_none():
+    evs = _events("bg_agent_pending.jsonl")
+    assert evs == [LaunchEvent("toolu_ag1")]
+    assert evs[0].timestamp is None

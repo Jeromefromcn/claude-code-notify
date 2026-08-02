@@ -8,6 +8,7 @@ _TOOL_USE_ID_RE = re.compile(r"<tool-use-id>\s*([^<\s]+)\s*</tool-use-id>")
 @dataclass(frozen=True)
 class LaunchEvent:
     tool_use_id: str
+    timestamp: str = None  # envelope's ISO8601 "timestamp" field, or None if absent
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,7 @@ def parse_events(path, offset=0):
         if not isinstance(envelope, dict):
             continue
         for tid in _launch_ids(envelope):
-            events.append(LaunchEvent(tid))
+            events.append(LaunchEvent(tid, envelope.get("timestamp")))
         for tid in _completion_ids(envelope):
             events.append(CompletionEvent(tid))
     return events, offset + consumed
