@@ -181,19 +181,30 @@ def handle_stop(payload, config):
     if res.muted:
         _debug(config, f"stop cwd={cwd} muted — no send")
         return
-    pending = compute_pending(transcript, str(cfg.state_path(config.base_dir, session_id)))
+    now = _now()
+    stale_ids = []
+    pending = compute_pending(
+        transcript,
+        str(cfg.state_path(config.base_dir, session_id)),
+        stale_seconds=config.pending_stale_seconds,
+        now=now,
+        on_stale=stale_ids.extend,
+    )
+    if stale_ids:
+        _debug(config, f"stop session={session_id} expired {len(stale_ids)} stale "
+                        f"launch(es) (older than {config.pending_stale_seconds}s): {sorted(stale_ids)}")
     _debug(config, f"stop session={session_id} pending={pending}")
     if pending > 0:
         return
     marker = str(cfg.marker_path(config.base_dir, session_id))
-    if not ratelimit.should_send(marker, config.ratelimit_seconds, _now()):
+    if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
         _debug(config, f"stop session={session_id} suppressed by rate-limit")
         return
     title = latest_ai_title(transcript)
-    duration = _turn_duration(transcript, _now())
+    duration = _turn_duration(transcript, now)
     dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
     notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
-    ratelimit.record_sent(marker, _now())
+    ratelimit.record_sent(marker, now)
     _debug(config, f"stop session={session_id} notified chat={res.chat_id}")
 
 

@@ -28,13 +28,16 @@ def _write_transcript(tmp_path, lines):
 def test_stop_pending_does_not_send(base, tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T01:00:10.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
     transcript = _write_transcript(tmp_path, [
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
     ])
     payload = {"session_id": "s1", "transcript_path": transcript, "cwd": "/w"}
     rc = hooks.run("stop", json.dumps(payload))
     assert rc == 0
-    assert sent == []  # background Agent still pending
+    assert sent == []  # launched 10s ago, well inside the default 4h staleness window
 
 
 def test_stop_completed_sends_once(base, tmp_path, monkeypatch):
@@ -137,14 +140,53 @@ def test_debug_log_written_and_scrubbed(tmp_path, monkeypatch):
         "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\nNOTIFY_DEBUG=true\nTELEGRAM_API_BASE=http://127.0.0.1:1\n"
     )
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    fixed_now = hooks._parse_ts("2026-07-11T01:00:10.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
     transcript = _write_transcript(tmp_path, [
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
     ])
     payload = {"session_id": "s6", "transcript_path": transcript, "cwd": "/w"}
     hooks.run("stop", json.dumps(payload))
     log = (tmp_path / "debug.log").read_text()
     assert "pending=1" in log
     assert "123:secret" not in log
+
+
+def test_stop_stale_pending_expires_and_sends(base, tmp_path, monkeypatch):
+    # A launch older than NOTIFY_PENDING_STALE_SECONDS must stop blocking the
+    # "finished" notification — this is the fix for
+    # docs/lessons-learned/0007-unresolved-background-task-blocks-all-future-notifications.md.
+    sent = []
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
+    fixed_now = hooks._parse_ts("2026-07-11T05:00:00.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T00:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+    ])
+    payload = {"session_id": "s_stale", "transcript_path": transcript, "cwd": "/w"}
+    assert hooks.run("stop", json.dumps(payload)) == 0
+    assert len(sent) == 1
+
+
+def test_stop_logs_expired_stale_launches(tmp_path, monkeypatch):
+    (tmp_path / "config.env").write_text(
+        "TELEGRAM_BOT_TOKEN=123:secret\nTELEGRAM_CHAT_ID=999\nNOTIFY_DEBUG=true\n"
+        "TELEGRAM_API_BASE=http://127.0.0.1:1\n"
+    )
+    monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
+    monkeypatch.setattr(hooks.notifier, "send", lambda c, t: None)
+    fixed_now = hooks._parse_ts("2026-07-11T05:00:00.000Z")
+    monkeypatch.setattr(hooks, "_now", lambda: fixed_now)
+    transcript = _write_transcript(tmp_path, [
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T00:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}',
+    ])
+    payload = {"session_id": "s_stale2", "transcript_path": transcript, "cwd": "/w"}
+    hooks.run("stop", json.dumps(payload))
+    log = (tmp_path / "debug.log").read_text()
+    assert "expired 1 stale launch" in log
 
 
 def test_format_duration_seconds():
