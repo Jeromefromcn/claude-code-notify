@@ -2,7 +2,7 @@
 
 ## Status
 
-Open. Root cause confirmed against a live production session; fix proposed below, not yet implemented.
+Resolved. Fix shipped in [2026-07-31-pending-launch-staleness-cutoff.md](../superpowers/plans/2026-07-31-pending-launch-staleness-cutoff.md).
 
 ## Summary
 
@@ -61,7 +61,7 @@ intentional idle, not incomplete work") — but that awareness was applied to fu
 poller hits the same case through a tool that was already in scope for v1, so it fell through a gap between
 "resolved" and "explicitly out of scope."
 
-## Proposed fix
+## Fix
 
 Add a staleness cutoff to pending-task tracking, so an old unresolved launch stops counting against
 `PENDING` instead of blocking indefinitely:
@@ -80,6 +80,8 @@ Add a staleness cutoff to pending-task tracking, so an old unresolved launch sto
    `"stop session=... pending=0 (1 stale launch expired after Nh, id=...)"`) so a future occurrence is
    diagnosable from `debug.log` directly, without needing to hand-recompute set differences from the raw
    state file the way this investigation did.
+
+Shipped as designed above, with one refinement discovered during planning: rather than tracking staleness in the launch id alone, `compute_pending()` now takes the ids to prune, and `hooks.handle_stop` logs them via the existing `_debug()` channel (`"expired N stale launch(es) (older than Ns): [...]"`) so a future occurrence is diagnosable from `debug.log` directly.
 
 Not proposed: changing `PENDING` to only consider tasks launched in the *current* turn. That would silence
 the suppression faster but throws away the actual intent of §4.2 — telling the user "not really done, X is

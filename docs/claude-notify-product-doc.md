@@ -111,6 +111,10 @@ Each run seeks past `offset` and parses only newly appended lines — O(growth s
 
 Within one session, `Stop` can fire many times (e.g. rapid follow-up questions). To avoid spamming: keep a marker file per session; if the last notification was sent less than `THRESHOLD` seconds ago (default 120), skip. Otherwise send and update the marker. This is purely anti-spam and independent of completion detection.
 
+### 4.6 Staleness cutoff
+
+A launched dispatch that never receives a matching `<task-notification>` (crashed shell, killed process, or a Claude Code bug in emitting the notification) would otherwise block `PENDING` — and therefore every future `Stop` notification in that session — forever. `NOTIFY_PENDING_STALE_SECONDS` (default `14400`, i.e. 4 hours) bounds this: any unresolved launch older than that, or with no known launch timestamp at all (including launches recorded by a pre-this-feature state file), is dropped from the pending count and from persisted state the next time `Stop` fires. Set `NOTIFY_PENDING_STALE_SECONDS=0` to disable expiry and restore the original wait-forever behavior. See [lessons learned 0007](lessons-learned/0007-unresolved-background-task-blocks-all-future-notifications.md) for the incident that motivated this.
+
 ## 5. Architecture
 
 ### 5.1 Components
@@ -154,6 +158,7 @@ TELEGRAM_BOT_TOKEN=123456:ABC...
 TELEGRAM_CHAT_ID=8737165697
 # optional
 NOTIFY_RATELIMIT_SECONDS=120
+NOTIFY_PENDING_STALE_SECONDS=14400            # 0 disables — see §4.6
 TELEGRAM_API_BASE=https://api.telegram.org   # override for tests / self-hosted
 NOTIFY_DEBUG=false                           # set true to enable debug.log for troubleshooting
 ```

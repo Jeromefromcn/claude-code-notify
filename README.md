@@ -61,9 +61,12 @@ TELEGRAM_CHAT_ID=8737165697
 
 # optional
 NOTIFY_RATELIMIT_SECONDS=120
+NOTIFY_PENDING_STALE_SECONDS=14400
 TELEGRAM_API_BASE=https://api.telegram.org
 NOTIFY_DEBUG=false
 ```
+
+A background task that never reports back (e.g. a killed process) stops blocking notifications after `NOTIFY_PENDING_STALE_SECONDS` (default 4h, `0` to disable).
 
 ### Directory routing
 
