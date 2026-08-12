@@ -133,7 +133,7 @@ At `Stop` time, the tool answers: *are there background tasks this session launc
 
 A background dispatch — `Agent` (background by default), `Bash` with `run_in_background=true`, or `SendMessage` (always async — it has no `run_in_background` flag and resumes a previously-spawned agent from its own transcript) — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. The same fix applies to `SendMessage`'s delivery ack. See [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for a real false-positive this caused before `SendMessage` was tracked.
 
-"Claude Code finished" is announced in exactly two situations, never on a plain turn-end: when a `Stop` turn resolved a tracked background launch via its `<task-notification>` and nothing is left pending (the "your background task just finished" ping), or when the `SessionEnd` hook fires with nothing pending and "finished" wasn't already sent (the session's real end). This matters because Claude Code's `Stop` hook fires at the end of **every** turn — in an interactive session that would otherwise ping "finished" after every message while the session is still in use (see [docs/lessons-learned/0008](docs/lessons-learned/0008-premature-finished-on-every-turn.md)).
+Every `Stop` where nothing is left pending pings once control returns to you — that always deserves a notification, whether it's a background task completing or a plain turn ending with your next prompt awaited. The wording tells the two apart: "Claude Code finished" when the `Stop` turn resolved a tracked background launch via its `<task-notification>` (the "your background task just finished" ping); "Claude Code is waiting for your input" for a plain turn-end with no background completion. `SessionEnd` covers the session's real close (process exit) and is deduped against an already-sent Stop ping for the same idle point. Repeats across closely-spaced turns are collapsed by the 120s rate limit, not by suppressing the notification outright — see [docs/lessons-learned/0009](docs/lessons-learned/0009-every-stop-should-notify.md) for why an earlier version (0.6.0) went the other way (silencing plain turn-ends) and had to be reverted.
 
 Transcripts are parsed incrementally (cached byte offset per session) and at the JSON envelope level — never by substring-matching text, so debug output that happens to contain the words "tool_use_id" can't produce a false signal.
 
@@ -144,9 +144,9 @@ Claude Code turn ends
       → config.load()                     # token, chat id, threshold
       → pending, resolved_now = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # background work still running
-      → if not resolved_now: exit 0       # plain turn end — no task completed
       → if not ratelimit.should_send():   exit 0
-      → notifier.send("Claude Code finished | …")   # a background task finished
+      → kind = "finished" if resolved_now else "waiting"
+      → notifier.send("Claude Code finished | …")   # or "… is waiting for your input | …"
 ```
 
 ```
@@ -156,7 +156,7 @@ Claude Code session terminates
       → config.load()
       → pending = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # session ended mid-background-task
-      → if finished_sent(state): exit 0   # Stop already announced it
+      → if finished_sent(state): exit 0   # a Stop ping already covered this idle point
       → if not ratelimit.should_send():   exit 0
       → notifier.send("Claude Code finished | …")   # the session's real end
 ```

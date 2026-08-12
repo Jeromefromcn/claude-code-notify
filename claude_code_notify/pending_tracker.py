@@ -12,7 +12,7 @@ class State:
     offset: int = 0
     launched: dict = field(default_factory=dict)  # tool_use_id -> ISO8601 launch timestamp, or None
     resolved: set = field(default_factory=set)
-    finished_sent: bool = False  # "finished" already announced for this session
+    finished_sent: bool = False  # a Stop "finished"/"waiting" ping already covered this idle point
 
 
 def load_state(path):

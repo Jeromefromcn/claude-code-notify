@@ -12,7 +12,7 @@
 
 Claude Code runs long, multi-step turns. A developer who kicks off a task wants to walk away and be pulled back **only** at the two moments that matter:
 
-1. **The work is done** — the background tasks the turn launched have all completed, and the session's own end is announced by Claude Code's `SessionEnd` hook. "Finished" is never announced on a plain per-turn `Stop` in a still-open interactive session (see [lessons-learned 0008](lessons-learned/0008-premature-finished-on-every-turn.md)).
+1. **Claude has stopped and control is back with you** — whether the background tasks the turn launched have all completed, a plain turn ended awaiting your next prompt, or the session itself has genuinely closed via Claude Code's `SessionEnd` hook. All three get a ping; the wording ("finished" vs "waiting for your input") tells them apart. See [lessons-learned 0008](lessons-learned/0008-premature-finished-on-every-turn.md) for the false-positive this avoids (misleadingly announcing "finished" while a background task was still running) and [lessons-learned 0009](lessons-learned/0009-every-stop-should-notify.md) for why silencing plain turn-ends entirely (0.6.0) was itself wrong — it stopped notifying at the moment you'd walked away and needed to know Claude was idle.
 2. **Claude is blocked** — it needs input (a permission decision) or it stopped with an error.
 
 Claude Code exposes `Stop`, `StopFailure`, `PermissionRequest`, and `SessionEnd` hooks that can fire a notification. A naive Stop hook, however, is wrong in a common case: it pings "finished" while a background task the turn launched is still running. It also has no version story — the logic lives as an inline shell string inside a personal `~/.claude/settings.json`, impossible to share, test, or upgrade.
@@ -51,8 +51,9 @@ The existing personal setup wires three hooks in `~/.claude/settings.json`:
 
 | Hook | Fires when | Message |
 |---|---|---|
-| `Stop` | A turn ends, **and** that turn resolved the last pending background task | `Claude Code finished \| <title> \| <cwd> \| <time>` |
-| `SessionEnd` | The session terminates (process exit; once per session) with nothing pending and no "finished" sent yet | `Claude Code finished \| <title> \| <cwd> \| <time>` |
+| `Stop` | A turn ends with nothing pending, and that turn resolved a background task | `Claude Code finished \| <title> \| <cwd> \| <time>` |
+| `Stop` | A turn ends with nothing pending, but no background task resolved (plain turn-end) | `Claude Code is waiting for your input \| <title> \| <cwd> \| <time>` |
+| `SessionEnd` | The session terminates (process exit; once per session) with nothing pending and no Stop ping already sent for this idle point | `Claude Code finished \| <title> \| <cwd> \| <time>` |
 | `StopFailure` | A turn ends with an error | `Claude Code stopped with error \| …` |
 | `PermissionRequest` | A tool call awaits approval | `Claude Code needs your input \| …` |
 
@@ -87,7 +88,7 @@ This single rule is robust across all three tools:
 - Works for `SendMessage` (its delivery ack no longer counts either).
 - The same underlying task can produce more than one `<task-notification>` over its lifetime — once when an agent first stops, and again each time it's resumed via `SendMessage` and stops again. Each of those is a **separate launch** (a distinct `tool_use_id`: the original `Agent` call, then one per `SendMessage` resume), each resolved independently by its own matching notification.
 
-`PENDING = launched − resolved`. If `PENDING > 0`, the Stop hook exits silently (do not notify — background work is still running). If `PENDING == 0` **and** the turn itself resolved a tracked launch via a `<task-notification>` (not merely ended — a plain interactive turn has nothing to announce; see §3 and lessons-learned 0008), proceed to dedup/rate-limit, then send. The session's own end is announced by the `SessionEnd` hook (§5.2) when `PENDING == 0` and "finished" was not already sent.
+`PENDING = launched − resolved`. If `PENDING > 0`, the Stop hook exits silently (do not notify — background work is still running). If `PENDING == 0`, proceed to dedup/rate-limit, then send — whether or not the turn resolved a tracked launch, since control has returned to the user either way (see lessons-learned 0009). The message wording distinguishes the two cases: "finished" when the turn itself resolved a tracked launch via a `<task-notification>`, "waiting for your input" otherwise (a plain interactive turn, or a staleness-only prune). The session's own end is announced by the `SessionEnd` hook (§5.2) only when `PENDING == 0` and a Stop ping hasn't already covered this idle point.
 
 ### 4.3 Transcript signals parsed
 
@@ -142,9 +143,9 @@ Claude Code turn ends
       → config.load()                     # token, chat id, threshold
       → pending, resolved_now = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # background work still running
-      → if not resolved_now: exit 0       # plain turn end — no task completed
       → if not ratelimit.should_send():   exit 0
-      → notifier.send("Claude Code finished | …")   # a background task finished
+      → kind = "finished" if resolved_now else "waiting"
+      → notifier.send("Claude Code finished | …")   # or "… is waiting for your input | …"
 ```
 
 ```
@@ -154,7 +155,7 @@ Claude Code session terminates
       → config.load()
       → pending = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # session ended mid-background-task
-      → if finished_sent(state): exit 0   # Stop already announced it
+      → if finished_sent(state): exit 0   # a Stop ping already covered this idle point
       → if not ratelimit.should_send():   exit 0
       → notifier.send("Claude Code finished | …")   # the session's real end
 ```

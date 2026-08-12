@@ -55,8 +55,8 @@ def test_stop_completed_sends_once(base, tmp_path, monkeypatch):
     assert hooks.run("stop", json.dumps(payload)) == 0
     assert len(sent) == 1
     assert sent[0] == "Claude Code finished | Do a thing | /w | " + sent[0].split(" | ")[-1]
-    # Second immediate Stop: the transcript has no new events, so no launch
-    # resolves in it — nothing to announce.
+    # Second immediate Stop: same instant, so it's within the 120s rate-limit
+    # window and the would-be "waiting" ping is suppressed as a duplicate.
     assert hooks.run("stop", json.dumps(payload)) == 0
     assert len(sent) == 1
 
@@ -80,11 +80,12 @@ def test_stop_completed_no_ai_title_omits_title(base, tmp_path, monkeypatch):
     assert sent[0] == "Claude Code finished | /w | " + sent[0].split(" | ")[-1]
 
 
-def test_stop_plain_turn_no_background_does_not_send(base, tmp_path, monkeypatch):
-    # The reported regression: an ordinary interactive turn with no background
-    # work and no task-notification must NOT announce "finished" — the docker-
-    # gitops session pinged "Claude Code finished | 15s" mid-session because
-    # every Stop fired with PENDING 0. That is SessionEnd's job now.
+def test_stop_plain_turn_sends_waiting(base, tmp_path, monkeypatch):
+    # An ordinary interactive turn with no background work and no
+    # task-notification must still notify once control returns to the user —
+    # as "waiting" (not "finished", since nothing actually completed). Every
+    # Stop where nothing is left pending hands control back to the user, and
+    # that always deserves a ping. See docs/lessons-learned/0009.
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
     fixed_now = hooks._parse_ts("2026-07-11T01:00:30.000Z")
@@ -100,11 +101,12 @@ def test_stop_plain_turn_no_background_does_not_send(base, tmp_path, monkeypatch
     ])
     payload = {"session_id": "plain", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
-    assert sent == []
-    # ...but the session's real end is announced.
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code is waiting for your input")
+    # The session's real end shortly after must NOT double-ping — Stop
+    # already told the user Claude went idle for this turn.
     assert hooks.run("session_end", json.dumps(payload)) == 0
     assert len(sent) == 1
-    assert sent[0].startswith("Claude Code finished")
 
 
 def test_session_end_sends_when_pending_zero(base, tmp_path, monkeypatch):
@@ -251,8 +253,8 @@ def test_stop_stale_pending_expires_and_unblocks(base, tmp_path, monkeypatch):
     # A launch older than NOTIFY_PENDING_STALE_SECONDS must stop blocking the
     # pending count — the fix for
     # docs/lessons-learned/0007-unresolved-background-task-blocks-all-future-notifications.md.
-    # Staleness expiry is not a completion, so the Stop that prunes it must not
-    # itself announce "finished"; the session's real end (SessionEnd) may.
+    # Staleness expiry is not a completion, so the Stop that prunes it announces
+    # "waiting" (control is back with the user), not "finished".
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
     fixed_now = hooks._parse_ts("2026-07-11T05:00:00.000Z")
@@ -263,11 +265,11 @@ def test_stop_stale_pending_expires_and_unblocks(base, tmp_path, monkeypatch):
     ])
     payload = {"session_id": "s_stale", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
-    assert sent == []  # prune alone is not a completion → no premature ping
-    # SessionEnd for the same session now sees pending 0 and announces finished.
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code is waiting for your input")
+    # SessionEnd for the same session must not re-ping — Stop already did.
     assert hooks.run("session_end", json.dumps(payload)) == 0
     assert len(sent) == 1
-    assert sent[0].startswith("Claude Code finished")
 
 
 def test_stop_logs_expired_stale_launches(tmp_path, monkeypatch):
@@ -478,15 +480,16 @@ def _usage_config(tmp_path, extra=""):
 
 
 def test_usage_limit_feature_off_by_default(base, tmp_path, monkeypatch):
-    # base fixture sets no NOTIFY_USAGE_LIMIT -> feature inert. A plain turn
-    # with no background work sends nothing on Stop at all (that is now
-    # SessionEnd's job); the point here is that no usage-limit message appears.
+    # base fixture sets no NOTIFY_USAGE_LIMIT -> feature inert. The rate-limit
+    # envelope is then just a plain turn ending with no background work, which
+    # still pings "waiting"; the point here is that no usage-limit message appears.
     sent = []
     monkeypatch.setattr(hooks.notifier, "send", lambda c, t: sent.append(t))
     transcript = _write_transcript(tmp_path, [_rate_limit_line()])
     payload = {"session_id": "u0", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
-    assert sent == []
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code is waiting for your input")
 
 
 def test_usage_limit_broadcasts_all_and_suppresses_finished(tmp_path, monkeypatch):
@@ -548,8 +551,8 @@ def test_usage_limit_reset_disabled_does_not_spawn(tmp_path, monkeypatch):
 def test_usage_limit_enabled_normal_finish_sends_normally(tmp_path, monkeypatch):
     # Feature ON, but this turn's last assistant message is a normal reply, not
     # a rate limit -> _maybe_handle_usage_limit must return False. A plain turn
-    # with no background work then sends nothing on Stop (SessionEnd covers the
-    # real "finished"); assert no broadcast, no reset spawn, no premature ping.
+    # with no background work then pings "waiting" as usual; assert no
+    # usage-limit broadcast and no reset spawn were triggered by it.
     _usage_config(tmp_path, "NOTIFY_USAGE_LIMIT_RESET=false\n")
     monkeypatch.setenv("CLAUDE_NOTIFY_HOME", str(tmp_path))
     sent = []
@@ -566,7 +569,8 @@ def test_usage_limit_enabled_normal_finish_sends_normally(tmp_path, monkeypatch)
     ])
     payload = {"session_id": "u5", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
-    assert sent == []
+    assert len(sent) == 1
+    assert sent[0].startswith("Claude Code is waiting for your input")
     assert broadcasts == []
     assert spawned == []
 
@@ -914,7 +918,8 @@ def test_stop_ignores_stale_rate_limit_predating_current_turn(tmp_path, monkeypa
     payload = {"session_id": "st1", "transcript_path": transcript, "cwd": "/w"}
     assert hooks.run("stop", json.dumps(payload)) == 0
     assert broadcasts == []                              # no usage-limit broadcast
-    assert sent == []                                    # plain turn: no premature "finished"
+    assert len(sent) == 1                                # plain turn: "waiting", not "finished"
+    assert sent[0].startswith("Claude Code is waiting for your input")
 
 
 def test_stop_reread_of_same_limit_maps_to_same_window(tmp_path, monkeypatch):

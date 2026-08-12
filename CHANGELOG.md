@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-08-12
+
+### Changed
+- Reverted part of 0.6.0: every `Stop` where nothing is pending now sends a
+  notification again, not only ones that resolved a tracked background task.
+  0.6.0 fixed a real problem (misleading "finished" pings on every turn of an
+  interactive session) but overcorrected by silencing plain turn-ends
+  entirely — which meant walking away mid-conversation, with no background
+  task running, produced no notification at all until the whole session
+  closed. The message wording now carries the distinction instead: "Claude
+  Code finished" when the turn resolved a tracked background launch,
+  "Claude Code is waiting for your input" for a plain turn-end (including one
+  that only pruned a stale launch). Repeats across closely-spaced turns are
+  still collapsed by the existing 120s rate limit — that mechanism, not
+  suppression, is what prevents spam. See
+  [docs/lessons-learned/0009](docs/lessons-learned/0009-every-stop-should-notify.md).
+- `SessionEnd`'s dedup against an already-sent Stop ping now applies to either
+  message kind ("finished" or "waiting"), not just "finished" — a normal
+  session close right after its last turn's Stop ping no longer double-pings.
+
+### Added
+- New `"waiting"` message kind (`Claude Code is waiting for your input`) in
+  `notifier.py`.
+
 ## [0.6.0] - 2026-08-12
 
 ### Changed

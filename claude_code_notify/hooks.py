@@ -171,20 +171,21 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     return True
 
 
-def _send_finished(config, res, session_id, transcript, cwd, now, state_path, marker):
-    """Build and send the 'finished' message; record marker + dedup flag.
+def _send_finished(config, kind, res, session_id, transcript, cwd, now, state_path, marker):
+    """Build and send a 'finished' or 'waiting' message; record marker + dedup flag.
 
-    Shared by the Stop path (a background task just completed) and the
-    SessionEnd path (the session is over). The caller has already decided the
-    send is warranted; this only does the actual send and its bookkeeping.
+    Shared by the Stop path (a background task completed, or a plain turn
+    ended with the user's next prompt pending) and the SessionEnd path (the
+    session is over). The caller has already decided the send is warranted;
+    this only does the actual send and its bookkeeping.
     """
     title = latest_ai_title(transcript)
     duration = _turn_duration(transcript, now)
     dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
-    notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
+    notifier.send(dest, notifier.build_message(kind, cwd, _when(), title, duration))
     ratelimit.record_sent(marker, now)
     pending_tracker.mark_finished_sent(state_path)
-    _debug(config, f"{session_id} notified chat={res.chat_id}")
+    _debug(config, f"{session_id} notified kind={kind} chat={res.chat_id}")
 
 
 def handle_stop(payload, config):
@@ -213,18 +214,20 @@ def handle_stop(payload, config):
         _debug(config, f"stop session={session_id} expired {len(stale_ids)} stale "
                         f"launch(es) (older than {config.pending_stale_seconds}s): {sorted(stale_ids)}")
     _debug(config, f"stop session={session_id} pending={pending}")
-    # "finished" now means the last tracked background launch was resolved by a
-    # <task-notification> this turn — NOT that a turn simply ended. A plain
-    # interactive turn (no background work, no completion) must stay silent;
-    # the session's real end is announced by the SessionEnd hook. Staleness
-    # expiry alone (no completion) also does not announce "finished".
-    if pending > 0 or not resolved_now:
+    # Any Stop with nothing left pending hands control back to the user —
+    # that always deserves a ping, whether a background launch just resolved
+    # ("finished") or the turn simply ended with the user's next prompt
+    # pending ("waiting"). Only an in-flight background task (pending > 0)
+    # stays silent. Repeat pings across closely-spaced turns are collapsed by
+    # the rate limit below, not by suppressing the notification outright.
+    if pending > 0:
         return
     marker = str(cfg.marker_path(config.base_dir, session_id))
     if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
         _debug(config, f"stop session={session_id} suppressed by rate-limit")
         return
-    _send_finished(config, res, f"stop session={session_id}", transcript, cwd, now, state_path, marker)
+    kind = "finished" if resolved_now else "waiting"
+    _send_finished(config, kind, res, f"stop session={session_id}", transcript, cwd, now, state_path, marker)
 
 
 def handle_session_end(payload, config):
@@ -257,7 +260,7 @@ def handle_session_end(payload, config):
     if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
         _debug(config, f"session_end session={session_id} suppressed by rate-limit")
         return
-    _send_finished(config, res, f"session_end session={session_id}", transcript, cwd, now, state_path, marker)
+    _send_finished(config, "finished", res, f"session_end session={session_id}", transcript, cwd, now, state_path, marker)
 
 
 def handle_stop_failure(payload, config):
