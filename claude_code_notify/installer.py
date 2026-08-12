@@ -14,6 +14,7 @@ _EVENTS = {
     "Stop": "stop.sh",
     "StopFailure": "stop_failure.sh",
     "PermissionRequest": "permission_request.sh",
+    "SessionEnd": "session_end.sh",
 }
 
 

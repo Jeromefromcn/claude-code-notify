@@ -12,7 +12,7 @@ from . import ratelimit
 from . import recovery
 from . import routing
 from . import usagelimit
-from .pending_tracker import compute_pending
+from . import pending_tracker
 from .transcript_parser import latest_ai_title, turn_start_timestamp
 
 
@@ -171,6 +171,22 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     return True
 
 
+def _send_finished(config, res, session_id, transcript, cwd, now, state_path, marker):
+    """Build and send the 'finished' message; record marker + dedup flag.
+
+    Shared by the Stop path (a background task just completed) and the
+    SessionEnd path (the session is over). The caller has already decided the
+    send is warranted; this only does the actual send and its bookkeeping.
+    """
+    title = latest_ai_title(transcript)
+    duration = _turn_duration(transcript, now)
+    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+    notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
+    ratelimit.record_sent(marker, now)
+    pending_tracker.mark_finished_sent(state_path)
+    _debug(config, f"{session_id} notified chat={res.chat_id}")
+
+
 def handle_stop(payload, config):
     if _maybe_handle_usage_limit(payload, config):
         return
@@ -183,29 +199,65 @@ def handle_stop(payload, config):
         return
     now = _now()
     stale_ids = []
-    pending = compute_pending(
+    resolved_now = []
+    state_path = str(cfg.state_path(config.base_dir, session_id))
+    pending = pending_tracker.compute_pending(
         transcript,
-        str(cfg.state_path(config.base_dir, session_id)),
+        state_path,
         stale_seconds=config.pending_stale_seconds,
         now=now,
         on_stale=stale_ids.extend,
+        on_resolved=resolved_now.extend,
     )
     if stale_ids:
         _debug(config, f"stop session={session_id} expired {len(stale_ids)} stale "
                         f"launch(es) (older than {config.pending_stale_seconds}s): {sorted(stale_ids)}")
     _debug(config, f"stop session={session_id} pending={pending}")
-    if pending > 0:
+    # "finished" now means the last tracked background launch was resolved by a
+    # <task-notification> this turn — NOT that a turn simply ended. A plain
+    # interactive turn (no background work, no completion) must stay silent;
+    # the session's real end is announced by the SessionEnd hook. Staleness
+    # expiry alone (no completion) also does not announce "finished".
+    if pending > 0 or not resolved_now:
         return
     marker = str(cfg.marker_path(config.base_dir, session_id))
     if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
         _debug(config, f"stop session={session_id} suppressed by rate-limit")
         return
-    title = latest_ai_title(transcript)
-    duration = _turn_duration(transcript, now)
-    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
-    notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
-    ratelimit.record_sent(marker, now)
-    _debug(config, f"stop session={session_id} notified chat={res.chat_id}")
+    _send_finished(config, res, f"stop session={session_id}", transcript, cwd, now, state_path, marker)
+
+
+def handle_session_end(payload, config):
+    session_id = payload.get("session_id", "")
+    transcript = payload.get("transcript_path", "")
+    cwd = payload.get("cwd", "")
+    res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
+    if res.muted:
+        _debug(config, f"session_end cwd={cwd} muted — no send")
+        return
+    now = _now()
+    state_path = str(cfg.state_path(config.base_dir, session_id))
+    pending = pending_tracker.compute_pending(
+        transcript,
+        state_path,
+        stale_seconds=config.pending_stale_seconds,
+        now=now,
+    )
+    _debug(config, f"session_end session={session_id} pending={pending}")
+    if pending > 0:
+        _debug(config, f"session_end session={session_id} ending with background work "
+                        f"still pending — no 'finished'")
+        return
+    if pending_tracker.finished_sent(state_path):
+        # Stop already announced the last background task's completion; the
+        # session continuing afterward (or closing) must not re-ping.
+        _debug(config, f"session_end session={session_id} 'finished' already sent — skip")
+        return
+    marker = str(cfg.marker_path(config.base_dir, session_id))
+    if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
+        _debug(config, f"session_end session={session_id} suppressed by rate-limit")
+        return
+    _send_finished(config, res, f"session_end session={session_id}", transcript, cwd, now, state_path, marker)
 
 
 def handle_stop_failure(payload, config):
@@ -251,6 +303,7 @@ _HANDLERS = {
     "stop": handle_stop,
     "stop_failure": handle_stop_failure,
     "permission_request": handle_permission_request,
+    "session_end": handle_session_end,
 }
 
 

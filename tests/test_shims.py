@@ -26,7 +26,8 @@ def test_stop_shim_forwards_stdin(tmp_path):
     )
     transcript = tmp_path / "s.jsonl"
     transcript.write_text(
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
+        '{"type":"assistant","isSidechain":false,"timestamp":"2026-07-11T01:00:00.000Z",'
+        '"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
     )
     payload = json.dumps({"session_id": "s", "transcript_path": str(transcript), "cwd": "/w"})
     env = dict(os.environ, CLAUDE_NOTIFY_HOME=str(tmp_path))
@@ -40,8 +41,8 @@ def test_stop_shim_forwards_stdin(tmp_path):
     assert not (tmp_path / "state" / "s.marker").exists()
 
 
-def test_all_three_shims_exist_and_executable():
-    for name in ("stop.sh", "stop_failure.sh", "permission_request.sh"):
+def test_all_hook_shims_exist_and_executable():
+    for name in ("stop.sh", "stop_failure.sh", "permission_request.sh", "session_end.sh"):
         path = os.path.join(REPO, "hooks", name)
         assert os.path.exists(path)
         assert os.access(path, os.X_OK)
@@ -53,6 +54,7 @@ def test_all_three_shims_exist_and_executable():
         ("stop.sh", "stop"),
         ("stop_failure.sh", "stop_failure"),
         ("permission_request.sh", "permission_request"),
+        ("session_end.sh", "session_end"),
     ],
 )
 def test_shim_forwards_event_to_correct_handler(tmp_path, script, event):
@@ -69,6 +71,11 @@ def test_shim_forwards_event_to_correct_handler(tmp_path, script, event):
     # {event} is exactly the argv value the shim passed through — so
     # observing that line via NOTIFY_DEBUG proves the shim threaded the
     # right event name to hooks.py, independent of network availability.
+    #
+    # The transcript carries a launch + its completion: only then does the
+    # Stop handler attempt a send at all (a plain turn sends nothing since
+    # "finished" moved to SessionEnd), so the notifier error fires for every
+    # event under test.
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.env").write_text(
@@ -76,7 +83,10 @@ def test_shim_forwards_event_to_correct_handler(tmp_path, script, event):
         "TELEGRAM_API_BASE=http://127.0.0.1:1\nNOTIFY_DEBUG=1\n"
     )
     transcript = tmp_path / "s.jsonl"
-    transcript.write_text("")  # no unresolved background dispatch → pending 0
+    transcript.write_text(
+        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
+        '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}\n'
+    )
     payload = json.dumps({"session_id": "s", "transcript_path": str(transcript), "cwd": "/w"})
     env = dict(os.environ, CLAUDE_NOTIFY_HOME=str(home))
     result = subprocess.run(

@@ -4,6 +4,44 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-08-12
+
+### Changed
+- "Claude Code finished" no longer fires on every `Stop` (turn) event. Claude
+  Code's `Stop` hook fires at the end of **every** turn, so in an interactive
+  multi-turn session the tool was pinging "finished" repeatedly while the
+  session was still in use — exactly the "task not done yet" false positives
+  reported from a live `docker-gitops` session (PENDING was 0 on every turn
+  because nothing was ever launched in the background). "finished" is now
+  announced in exactly two situations:
+  1. A `Stop` event where a tracked background launch (`Agent`, background
+     `Bash`, `SendMessage`) was resolved by a `<task-notification>` that turn
+     and nothing is left pending — the "your background task just finished"
+     ping, unchanged in intent.
+  2. A new `SessionEnd` hook firing with `PENDING == 0` and no "finished"
+     already sent for the session — the session's real end (one-shot
+     `claude "..."` runs, closing an interactive session). This is the first
+     hook wired to Claude Code's `SessionEnd` event.
+- A plain turn with no background work (however long or short) stays silent on
+  `Stop`. Staleness expiry alone (a launch pruned by `NOTIFY_PENDING_STALE_SECONDS`)
+  also stays silent — it unblocks future notifications but is not a completion.
+- The `Stop` handler now sends via a shared `_send_finished` helper, and the
+  session state file records a `finished_sent` flag so `SessionEnd` dedups
+  against a `Stop`-already-announced completion instead of double-pinging.
+
+### Added
+- `SessionEnd` hook (`hooks/session_end.sh`) registered by the installer.
+- `pending_tracker.compute_pending()` gains an `on_resolved` callback reporting
+  launches resolved by a `<task-notification>` in the current parse pass — the
+  signal the `Stop` handler uses to distinguish a real completion from a plain
+  turn ending. `pending_tracker.finished_sent()` / `mark_finished_sent()`
+  persist and read the dedup flag.
+
+### Fixed
+- Repeated premature "Claude Code finished" notifications during interactive
+  sessions (see Changed above). See
+  [docs/lessons-learned/0008](docs/lessons-learned/0008-premature-finished-on-every-turn.md).
+
 ## [0.5.0] - 2026-08-02
 
 ### Added

@@ -131,7 +131,9 @@ tokens**.
 
 At `Stop` time, the tool answers: *are there background tasks this session launched that haven't finished?*
 
-A background dispatch — `Agent` (background by default), `Bash` with `run_in_background=true`, or `SendMessage` (always async — it has no `run_in_background` flag and resumes a previously-spawned agent from its own transcript) — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. The same fix applies to `SendMessage`'s delivery ack. If any dispatch is still unresolved, the hook stays silent; only once everything has resolved does it check a rate limit and send. See [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for a real false-positive this caused before `SendMessage` was tracked.
+A background dispatch — `Agent` (background by default), `Bash` with `run_in_background=true`, or `SendMessage` (always async — it has no `run_in_background` flag and resumes a previously-spawned agent from its own transcript) — is marked **resolved only** by a `<task-notification>` whose `tool_use_id` matches the launch. An immediate ack `tool_result` never counts as resolution — this is the fix for the background-Bash false positive: a background `Bash` command emits an *immediate* ack `tool_result` (`"Command running in background with ID: …"`) the instant it's dispatched, long before it actually finishes, and a naive hook that treats that ack as "done" fires early. The same fix applies to `SendMessage`'s delivery ack. See [docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md](docs/lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for a real false-positive this caused before `SendMessage` was tracked.
+
+"Claude Code finished" is announced in exactly two situations, never on a plain turn-end: when a `Stop` turn resolved a tracked background launch via its `<task-notification>` and nothing is left pending (the "your background task just finished" ping), or when the `SessionEnd` hook fires with nothing pending and "finished" wasn't already sent (the session's real end). This matters because Claude Code's `Stop` hook fires at the end of **every** turn — in an interactive session that would otherwise ping "finished" after every message while the session is still in use (see [docs/lessons-learned/0008](docs/lessons-learned/0008-premature-finished-on-every-turn.md)).
 
 Transcripts are parsed incrementally (cached byte offset per session) and at the JSON envelope level — never by substring-matching text, so debug output that happens to contain the words "tool_use_id" can't produce a false signal.
 
@@ -140,10 +142,23 @@ Claude Code turn ends
   → Stop hook (settings.json) runs hooks/stop.sh
     → python3 -m claude_code_notify.hooks stop
       → config.load()                     # token, chat id, threshold
-      → pending = pending_tracker.compute(transcript, state)
+      → pending, resolved_now = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # background work still running
+      → if not resolved_now: exit 0       # plain turn end — no task completed
       → if not ratelimit.should_send():   exit 0
-      → notifier.send("Claude Code finished | …")
+      → notifier.send("Claude Code finished | …")   # a background task finished
+```
+
+```
+Claude Code session terminates
+  → SessionEnd hook (settings.json) runs hooks/session_end.sh
+    → python3 -m claude_code_notify.hooks session_end
+      → config.load()
+      → pending = pending_tracker.compute(transcript, state)
+      → if pending > 0: exit 0            # session ended mid-background-task
+      → if finished_sent(state): exit 0   # Stop already announced it
+      → if not ratelimit.should_send():   exit 0
+      → notifier.send("Claude Code finished | …")   # the session's real end
 ```
 
 `StopFailure` and `PermissionRequest` skip the pending/rate-limit checks and notify immediately — an error or a block should always be reported promptly.

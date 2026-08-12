@@ -7,10 +7,10 @@ def _empty_state():
     return {"commands": {}}
 
 
-def test_merge_adds_three_events():
+def test_merge_adds_all_events():
     settings = {}
     out, state = installer.merge_hooks(settings, "/home/u/.claude/claude-code-notify", _empty_state())
-    for event in ("Stop", "StopFailure", "PermissionRequest"):
+    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
         assert event in out["hooks"]
         cmd = out["hooks"][event][0]["hooks"][0]["command"]
         assert "claude-code-notify" in cmd
@@ -65,7 +65,7 @@ def test_merge_survives_base_dir_change():
     # test for todo.md issue 7 / ADR 0001.
     out_a, state_a = installer.merge_hooks({}, "/base/ccn-old", _empty_state())
     out_b, state_b = installer.merge_hooks(out_a, "/base/ccn-new", state_a)
-    for event in ("Stop", "StopFailure", "PermissionRequest"):
+    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
         entries = out_b["hooks"][event]
         assert len(entries) == 1
         assert "/base/ccn-new/" in entries[0]["hooks"][0]["command"]
