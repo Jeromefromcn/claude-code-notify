@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-08-12
+
+### Fixed
+- A `Bash` command that starts in the foreground but is still running when
+  its 120s timeout elapses is auto-promoted to a background task by Claude
+  Code itself — with no `run_in_background` flag ever set on the original
+  call. Launch detection only ever checked that flag, so this dispatch was
+  invisible to `PENDING` tracking: the Stop hook fired a false "Claude Code
+  is waiting for your input" ping while the command was still genuinely
+  running in the background. Detection now keys off the ack `tool_result`
+  envelope's `toolUseResult.backgroundTaskId` field instead, which both the
+  explicit and the auto-promoted path populate identically. See
+  [docs/lessons-learned/0010](docs/lessons-learned/0010-timeout-promoted-bash-untracked-background-dispatch.md).
+
 ## [0.7.0] - 2026-08-12
 
 ### Changed

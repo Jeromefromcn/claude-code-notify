@@ -17,8 +17,16 @@ class CompletionEvent:
 
 
 def _launch_ids(envelope):
-    if envelope.get("type") != "assistant" or envelope.get("isSidechain"):
+    if envelope.get("isSidechain"):
         return
+    etype = envelope.get("type")
+    if etype == "assistant":
+        yield from _assistant_launch_ids(envelope)
+    elif etype == "user":
+        yield from _bash_background_ack_ids(envelope)
+
+
+def _assistant_launch_ids(envelope):
     message = envelope.get("message") or {}
     content = message.get("content")
     if not isinstance(content, list):
@@ -31,15 +39,38 @@ def _launch_ids(envelope):
             continue
         name = block.get("name")
         run_bg = (block.get("input") or {}).get("run_in_background")
-        # Agent defaults to background; Bash defaults to foreground.
+        # Agent defaults to background. Bash's own transition to background
+        # — whether requested up front (run_in_background:true) or Claude
+        # Code auto-promoting a foreground command still running past its
+        # 120s timeout — is confirmed on the ack side instead, since the
+        # auto-promoted case never sets this input flag at all; see
+        # _bash_background_ack_ids and docs/lessons-learned/0010.
         if name == "Agent" and run_bg is not False:
-            yield tool_id
-        elif name == "Bash" and run_bg is True:
             yield tool_id
         # SendMessage resumes a previously-spawned agent from its own
         # transcript and always runs async — no run_in_background flag exists.
         elif name == "SendMessage":
             yield tool_id
+
+
+def _bash_background_ack_ids(envelope):
+    # A Bash call becomes a background dispatch either because the model
+    # asked for it (run_in_background:true) or because Claude Code
+    # auto-promotes a command still running after its 120s timeout. Both
+    # paths funnel through this same structural ack field, so detect the
+    # shape here rather than the assistant's declared intent.
+    tool_use_result = envelope.get("toolUseResult")
+    if not isinstance(tool_use_result, dict) or not tool_use_result.get("backgroundTaskId"):
+        return
+    message = envelope.get("message") or {}
+    content = message.get("content")
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            tool_id = block.get("tool_use_id")
+            if tool_id:
+                yield tool_id
 
 
 def _completion_content(envelope):

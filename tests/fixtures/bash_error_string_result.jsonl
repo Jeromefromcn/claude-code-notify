@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"toolu_err1","name":"Bash","input":{"command":"docker push ghcr.io/x/y"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_err1","content":"Error: Exit code 1\nsome failure output","is_error":true}]},"toolUseResult":"Error: Exit code 1\nsome failure output"}

@@ -70,10 +70,12 @@ This is the heart of the tool. It answers one question at Stop time: **are there
 | Tool | Background when | Immediate ack `tool_result`? | Completion signal |
 |---|---|---|---|
 | `Agent` | `run_in_background != false` (i.e. `true` **or absent** — Agent defaults to background) | No | `<task-notification>` with matching `<tool-use-id>` |
-| `Bash` | `run_in_background == true` (Bash defaults to foreground) | **Yes** (`"Command running in background with ID: …"`) | `<task-notification>` with matching `<tool-use-id>` |
+| `Bash` | Ack `tool_result` envelope's `toolUseResult.backgroundTaskId` is set (Bash defaults to foreground) | **Yes** (`"Command running in background with ID: …"`, or `"Command did not complete within its 120s timeout and was moved to the background…"`) | `<task-notification>` with matching `<tool-use-id>` |
 | `SendMessage` | Always — it resumes a previously-spawned agent from its own transcript; there is no `run_in_background` flag to check | **Yes** (a delivery/queued ack) | `<task-notification>` with matching `<tool-use-id>` |
 
 Foreground/synchronous calls always resolve *within* the turn, so they are never pending at Stop time and do not need tracking.
+
+`Bash` background dispatch has two distinct triggers that converge on the same ack signal: the model can request it up front (`input.run_in_background == true`), or Claude Code can auto-promote a plain foreground command that's still running when its 120s timeout elapses — in which case `run_in_background` was never set on the original call at all. Detection keys off the ack side (`toolUseResult.backgroundTaskId`, a structured field, not the ack's text) rather than the launch-time flag, so both triggers are covered by one rule. See [lessons learned 0010](lessons-learned/0010-timeout-promoted-bash-untracked-background-dispatch.md) for the incident that surfaced the auto-promoted case.
 
 Each `SendMessage` call gets its **own** `tool_use_id`, distinct from the id of the `Agent` call that originally spawned the resumed agent. Resuming an agent is therefore a **new launch** to track, not a re-open of the original one — see [lessons learned 0001](lessons-learned/0001-sendmessage-untracked-background-dispatch.md) for the incident that surfaced this gap.
 
@@ -92,7 +94,7 @@ This single rule is robust across all three tools:
 
 ### 4.3 Transcript signals parsed
 
-- **Launch:** an `assistant` entry with a `tool_use` content block where `name` is `Agent` (background unless `input.run_in_background == false`), `Bash` with `input.run_in_background == true`, or `SendMessage` (always). Record its `id`.
+- **Launch:** an `assistant` entry with a `tool_use` content block where `name` is `Agent` (background unless `input.run_in_background == false`) or `SendMessage` (always) — record its `id`. For `Bash`, launch is instead detected on the matching `user`/`tool_result` entry: record the block's `tool_use_id` whenever that entry's `toolUseResult.backgroundTaskId` is set (a dict field — `toolUseResult` can also be a plain string for a failed foreground command, which must not be mistaken for this shape).
 - **Completion:** a `<task-notification>` block — appears both as a `queue-operation` entry and as a `user` entry with `origin.kind == "task-notification"` — containing `<tool-use-id>…</tool-use-id>`. Record every matched id as resolved.
 
 Parse at the JSON **envelope** level (entry `type`, `tool_use`/`tool_result` structure), never by substring-matching text. Debug output that happens to print the words "tool_use_id" or "task-notification" inside some Bash result text must not poison the count.

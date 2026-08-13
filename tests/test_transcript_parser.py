@@ -39,6 +39,22 @@ def test_background_bash_completed():
     assert CompletionEvent("toolu_bg2") in evs
 
 
+def test_bash_error_string_tooluseresult_not_treated_as_background():
+    # A failed foreground command's toolUseResult is a plain string (the
+    # error text), not a dict — must not crash or be mistaken for a
+    # background dispatch.
+    assert _events("bash_error_string_result.jsonl") == []
+
+
+def test_background_bash_timeout_promotion_detected():
+    # A Bash call started in the foreground (no run_in_background flag at
+    # all) but still running past its 120s timeout is auto-promoted to
+    # background by Claude Code itself. The declared-intent flag is absent,
+    # so detection must come from the ack's toolUseResult.backgroundTaskId
+    # instead — see docs/lessons-learned/0010.
+    assert _events("bg_bash_timeout_promoted.jsonl") == [LaunchEvent("toolu_to1")]
+
+
 def test_sendmessage_launch_detected():
     # SendMessage resumes a previously-spawned agent asynchronously; it has
     # no run_in_background flag and is always a background dispatch.
