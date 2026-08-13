@@ -12,10 +12,10 @@
 
 Claude Code runs long, multi-step turns. A developer who kicks off a task wants to walk away and be pulled back **only** at the two moments that matter:
 
-1. **Claude has stopped and control is back with you** — whether the background tasks the turn launched have all completed, a plain turn ended awaiting your next prompt, or the session itself has genuinely closed via Claude Code's `SessionEnd` hook. All three get a ping; the wording ("finished" vs "waiting for your input") tells them apart. See [lessons-learned 0008](lessons-learned/0008-premature-finished-on-every-turn.md) for the false-positive this avoids (misleadingly announcing "finished" while a background task was still running) and [lessons-learned 0009](lessons-learned/0009-every-stop-should-notify.md) for why silencing plain turn-ends entirely (0.6.0) was itself wrong — it stopped notifying at the moment you'd walked away and needed to know Claude was idle.
+1. **Claude has stopped and control is back with you** — whether the background tasks the turn launched have all completed, or a plain turn simply ended awaiting your next prompt. Every `Stop` where nothing is left pending gets a ping, worded "finished" either way. Two releases (0.6.0, 0.7.0) tried a finer-grained split — silence plain turn-ends, then a separate "waiting for your input" wording plus a `SessionEnd` hook for the session's real close — and 0.8.0 reverted both: see [lessons-learned 0008](lessons-learned/0008-premature-finished-on-every-turn.md), [0009](lessons-learned/0009-every-stop-should-notify.md), and [0011](lessons-learned/0011-revert-waiting-wording-and-session-end.md) for the full back-and-forth.
 2. **Claude is blocked** — it needs input (a permission decision) or it stopped with an error.
 
-Claude Code exposes `Stop`, `StopFailure`, `PermissionRequest`, and `SessionEnd` hooks that can fire a notification. A naive Stop hook, however, is wrong in a common case: it pings "finished" while a background task the turn launched is still running. It also has no version story — the logic lives as an inline shell string inside a personal `~/.claude/settings.json`, impossible to share, test, or upgrade.
+Claude Code exposes `Stop`, `StopFailure`, and `PermissionRequest` hooks that can fire a notification. A naive Stop hook, however, is wrong in a common case: it pings "finished" while a background task the turn launched is still running. It also has no version story — the logic lives as an inline shell string inside a personal `~/.claude/settings.json`, impossible to share, test, or upgrade.
 
 `claude-code-notify` extracts this capability into a standalone, open-source, versioned tool that:
 
@@ -51,9 +51,7 @@ The existing personal setup wires three hooks in `~/.claude/settings.json`:
 
 | Hook | Fires when | Message |
 |---|---|---|
-| `Stop` | A turn ends with nothing pending, and that turn resolved a background task | `Claude Code finished \| <title> \| <cwd> \| <time>` |
-| `Stop` | A turn ends with nothing pending, but no background task resolved (plain turn-end) | `Claude Code is waiting for your input \| <title> \| <cwd> \| <time>` |
-| `SessionEnd` | The session terminates (process exit; once per session) with nothing pending and no Stop ping already sent for this idle point | `Claude Code finished \| <title> \| <cwd> \| <time>` |
+| `Stop` | A turn ends with nothing pending — whether or not that turn resolved a background task | `Claude Code finished \| <title> \| <cwd> \| <time>` |
 | `StopFailure` | A turn ends with an error | `Claude Code stopped with error \| …` |
 | `PermissionRequest` | A tool call awaits approval | `Claude Code needs your input \| …` |
 
@@ -90,7 +88,7 @@ This single rule is robust across all three tools:
 - Works for `SendMessage` (its delivery ack no longer counts either).
 - The same underlying task can produce more than one `<task-notification>` over its lifetime — once when an agent first stops, and again each time it's resumed via `SendMessage` and stops again. Each of those is a **separate launch** (a distinct `tool_use_id`: the original `Agent` call, then one per `SendMessage` resume), each resolved independently by its own matching notification.
 
-`PENDING = launched − resolved`. If `PENDING > 0`, the Stop hook exits silently (do not notify — background work is still running). If `PENDING == 0`, proceed to dedup/rate-limit, then send — whether or not the turn resolved a tracked launch, since control has returned to the user either way (see lessons-learned 0009). The message wording distinguishes the two cases: "finished" when the turn itself resolved a tracked launch via a `<task-notification>`, "waiting for your input" otherwise (a plain interactive turn, or a staleness-only prune). The session's own end is announced by the `SessionEnd` hook (§5.2) only when `PENDING == 0` and a Stop ping hasn't already covered this idle point.
+`PENDING = launched − resolved`. If `PENDING > 0`, the Stop hook exits silently (do not notify — background work is still running). If `PENDING == 0`, proceed to dedup/rate-limit, then send "finished" — whether or not the turn resolved a tracked launch, since control has returned to the user either way (see lessons-learned 0009, 0011). There is no separate wording for "a plain turn ended" versus "a background task resolved," and no `SessionEnd` hook: both existed briefly (0.6.0–0.7.1) and were reverted in 0.8.0 because the notification cadence never actually differed from "every `Stop` with nothing pending" — see [lessons-learned 0011](lessons-learned/0011-revert-waiting-wording-and-session-end.md).
 
 ### 4.3 Transcript signals parsed
 
@@ -132,37 +130,26 @@ A launched dispatch that never receives a matching `<task-notification>` (crashe
 | `ratelimit.py` | Dedup/rate-limit marker logic. | session id, threshold → `should_send: bool` |
 | `notifier.py` | Format and send a Telegram message; scrub secrets from any error output. | message fields, config → send result |
 | `config.py` | Locate and load config (bot token, chat id, threshold, `NOTIFY_DEBUG`); resolve global vs project. | env/file → config object |
-| `hooks.py` | Entry points `stop`, `stop_failure`, `permission_request`, `session_end`; wire the pieces; read Claude Code's hook JSON from stdin; write debug log lines when enabled; never propagate an exception — catch, log, exit 0. | stdin JSON → side effect (notify or not) |
+| `hooks.py` | Entry points `stop`, `stop_failure`, `permission_request`; wire the pieces; read Claude Code's hook JSON from stdin; write debug log lines when enabled; never propagate an exception — catch, log, exit 0. | stdin JSON → side effect (notify or not) |
 
 **Bash shims** (`hooks/*.sh`) — thin membranes only. Claude Code delivers all hook data (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `tool_name`, etc.) as a single JSON object on **stdin** — not via env vars. (The only real Claude Code env vars are path placeholders: `$CLAUDE_PROJECT_DIR`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PLUGIN_DATA`, plus `$CLAUDE_CODE_REMOTE`/`$CLAUDE_EFFORT`, none of which carry session/transcript/tool identity.) Each shim forwards stdin unchanged to `python3 -m claude_code_notify.hooks <event>`. No business logic.
 
-### 5.2 Data flow (Stop / SessionEnd events)
+### 5.2 Data flow (Stop events)
 
 ```
 Claude Code turn ends
   → Stop hook (settings.json) runs hooks/stop.sh
     → python3 -m claude_code_notify.hooks stop
       → config.load()                     # token, chat id, threshold
-      → pending, resolved_now = pending_tracker.compute(transcript, state)
+      → pending = pending_tracker.compute(transcript, state)
       → if pending > 0: exit 0            # background work still running
       → if not ratelimit.should_send():   exit 0
-      → kind = "finished" if resolved_now else "waiting"
-      → notifier.send("Claude Code finished | …")   # or "… is waiting for your input | …"
-```
-
-```
-Claude Code session terminates
-  → SessionEnd hook (settings.json) runs hooks/session_end.sh
-    → python3 -m claude_code_notify.hooks session_end
-      → config.load()
-      → pending = pending_tracker.compute(transcript, state)
-      → if pending > 0: exit 0            # session ended mid-background-task
-      → if finished_sent(state): exit 0   # a Stop ping already covered this idle point
-      → if not ratelimit.should_send():   exit 0
-      → notifier.send("Claude Code finished | …")   # the session's real end
+      → notifier.send("Claude Code finished | …")
 ```
 
 `StopFailure` and `PermissionRequest` skip pending/rate-limit checks and send directly (an error or a block should always notify promptly).
+
+0.6.0–0.7.1 also wired a `SessionEnd` hook and a `finished`/`waiting` wording split; both were reverted in 0.8.0 — see [lessons-learned 0011](lessons-learned/0011-revert-waiting-wording-and-session-end.md). An installer upgrading from one of those versions actively removes the stale `SessionEnd` entry from `settings.json` (§6.3).
 
 ### 5.3 Configuration storage
 
@@ -279,6 +266,8 @@ The installer:
 ### 6.3 Upgrade model
 
 Re-running the install command is the upgrade path: it fetches the newest release, overwrites code, and leaves config and other settings intact. Because completion-detection logic lives entirely in the versioned Python core, "install latest" is exactly how a user gets improved notification accuracy (e.g. the background-Bash fix). `CHANGELOG.md` records what each version corrects.
+
+An upgrade can also *decommission* a hook a previous version managed but the current one no longer wires (e.g. `SessionEnd`, removed in 0.8.0). `installer.py` tracks this via `_DECOMMISSIONED_EVENTS`: on `merge`, any event listed there has its previously-recorded entry actively stripped from `settings.json` and dropped from the sidecar state file, rather than left wired to a script the new package no longer ships. `install.sh` separately deletes the now-orphaned shim file, since a plain file copy only adds/overwrites — it never removes a file that's no longer in the source tree. See [lessons-learned 0011](lessons-learned/0011-revert-waiting-wording-and-session-end.md).
 
 ## 7. Versioning & releases
 

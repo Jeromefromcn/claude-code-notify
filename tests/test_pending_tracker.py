@@ -200,62 +200,11 @@ def test_resolved_launch_never_counted_stale_or_not(tmp_path):
     assert seen == []
 
 
-def test_on_resolved_reports_ids_resolved_this_pass(tmp_path):
-    # The signal that lets the Stop handler tell "the last background task
-    # finished" from "a plain turn ended": a completion that resolves a known
-    # launch in this pass.
-    src = tmp_path / "s.jsonl"
-    state_path = str(tmp_path / "s.state.json")
-    src.write_text(
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
-    )
-    seen = []
-    assert pt.compute_pending(str(src), state_path, on_resolved=seen.extend) == 1
-    assert seen == []
-    with open(src, "a") as fh:
-        fh.write('{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}\n')
-    assert pt.compute_pending(str(src), state_path, on_resolved=seen.extend) == 0
-    assert seen == ["a"]
-
-
-def test_on_resolved_excludes_orphaned_completions(tmp_path):
-    # A stray task-notification with no matching launch must not count as a
-    # resolution — otherwise an orphaned completion would trigger "finished".
-    src = tmp_path / "s.jsonl"
-    src.write_text('{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>orphan</tool-use-id>\\n</task-notification>"}\n')
-    seen = []
-    assert pt.compute_pending(str(src), str(tmp_path / "s.state.json"), on_resolved=seen.extend) == 0
-    assert seen == []
-
-
-def test_on_resolved_excludes_repeat_resolutions(tmp_path):
-    # A completion for an already-resolved launch (task-notification firing
-    # twice) must not be reported again on a later re-parse.
-    src = tmp_path / "s.jsonl"
-    state_path = str(tmp_path / "s.state.json")
-    src.write_text(
-        '{"type":"assistant","isSidechain":false,"message":{"content":[{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}\n'
-        '{"type":"queue-operation","content":"<task-notification>\\n<tool-use-id>a</tool-use-id>\\n</task-notification>"}\n'
-    )
-    seen = []
-    assert pt.compute_pending(str(src), state_path, on_resolved=seen.extend) == 0
-    assert seen == ["a"]
-    assert pt.compute_pending(str(src), state_path, on_resolved=seen.extend) == 0
-    assert seen == ["a"]  # not reported a second time
-
-
-def test_finished_sent_flag_defaults_false_and_roundtrips(tmp_path):
-    state_path = str(tmp_path / "s.state.json")
-    pt.compute_pending(os.path.join(FIX, "foreground_only.jsonl"), state_path)
-    assert pt.finished_sent(state_path) is False
-    pt.mark_finished_sent(state_path)
-    assert pt.finished_sent(state_path) is True
-    data = json.loads(open(state_path).read())
-    assert data["finished_sent"] is True
-    assert pt.finished_sent(str(tmp_path / "missing.json")) is False
-
-
-def test_load_state_defaults_finished_sent_false(tmp_path):
+def test_load_state_ignores_legacy_finished_sent_key(tmp_path):
+    # State files written by 0.6.0-0.7.1 carry a "finished_sent" key that's
+    # no longer part of the schema — must load cleanly and just ignore it.
     state_path = tmp_path / "legacy.state.json"
-    state_path.write_text('{"offset": 10, "launched": ["a"], "resolved": []}')
-    assert pt.load_state(str(state_path)).finished_sent is False
+    state_path.write_text('{"offset": 10, "launched": ["a"], "resolved": [], "finished_sent": true}')
+    state = pt.load_state(str(state_path))
+    assert state.launched == {"a": None}
+    assert state.resolved == set()

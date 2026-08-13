@@ -14,8 +14,13 @@ _EVENTS = {
     "Stop": "stop.sh",
     "StopFailure": "stop_failure.sh",
     "PermissionRequest": "permission_request.sh",
-    "SessionEnd": "session_end.sh",
 }
+
+# Events a previous version of this installer wired but the current version
+# no longer manages. Kept here (rather than just deleted from _EVENTS) so an
+# upgrade actively strips the stale settings.json entry instead of leaving it
+# wired to a script that no longer ships — see docs/lessons-learned/0011.
+_DECOMMISSIONED_EVENTS = ("SessionEnd",)
 
 
 def hook_entry(base_dir, event_script):
@@ -79,6 +84,15 @@ def merge_hooks(settings, base_dir, state):
         existing.append(new_entry)
         hooks[event] = existing
         commands[event] = new_entry["hooks"][0]["command"]
+    for event in _DECOMMISSIONED_EVENTS:
+        recorded_command = commands.pop(event, None)
+        if event not in hooks:
+            continue
+        kept = [e for e in hooks[event] if not _is_ours(e, recorded_command)]
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
     settings["hooks"] = hooks
     return settings, {"commands": commands}
 

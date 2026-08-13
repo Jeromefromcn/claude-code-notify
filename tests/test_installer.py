@@ -10,7 +10,7 @@ def _empty_state():
 def test_merge_adds_all_events():
     settings = {}
     out, state = installer.merge_hooks(settings, "/home/u/.claude/claude-code-notify", _empty_state())
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         assert event in out["hooks"]
         cmd = out["hooks"][event][0]["hooks"][0]["command"]
         assert "claude-code-notify" in cmd
@@ -24,6 +24,44 @@ def test_merge_is_idempotent():
     out2, state2 = installer.merge_hooks(out, base, state)
     assert len(out2["hooks"]["Stop"]) == 1  # not duplicated
     assert state2["commands"]["Stop"] == state["commands"]["Stop"]
+
+
+def test_merge_removes_decommissioned_session_end_hook():
+    # SessionEnd was managed by 0.6.0-0.7.1; the current installer no longer
+    # wires it. An upgrade must actively strip the stale entry rather than
+    # leave it wired to a script that no longer ships. See lessons-learned/0011.
+    base = "/home/u/.claude/claude-code-notify"
+    command = f"{base}/hooks/session_end.sh"
+    state = {"commands": {"SessionEnd": command}}
+    settings = {"hooks": {"SessionEnd": [
+        {"matcher": "", "hooks": [{"type": "command", "command": command}]}
+    ]}}
+    out, new_state = installer.merge_hooks(settings, base, state)
+    assert "SessionEnd" not in out["hooks"]
+    assert "SessionEnd" not in new_state["commands"]
+
+
+def test_merge_decommission_preserves_foreign_session_end_entry():
+    base = "/home/u/.claude/claude-code-notify"
+    command = f"{base}/hooks/session_end.sh"
+    state = {"commands": {"SessionEnd": command}}
+    settings = {"hooks": {"SessionEnd": [
+        {"matcher": "", "hooks": [{"type": "command", "command": command}]},
+        {"matcher": "", "hooks": [{"type": "command", "command": "echo other"}]},
+    ]}}
+    out, new_state = installer.merge_hooks(settings, base, state)
+    assert len(out["hooks"]["SessionEnd"]) == 1
+    assert "echo other" in out["hooks"]["SessionEnd"][0]["hooks"][0]["command"]
+    assert "SessionEnd" not in new_state["commands"]
+
+
+def test_merge_decommission_is_noop_when_nothing_recorded():
+    # A settings.json that never had SessionEnd wired (fresh install past
+    # this version) must not be touched by the decommission step.
+    settings = {}
+    out, state = installer.merge_hooks(settings, "/home/u/.claude/claude-code-notify", _empty_state())
+    assert "SessionEnd" not in out["hooks"]
+    assert "SessionEnd" not in state["commands"]
 
 
 def test_merge_preserves_foreign_hooks():
@@ -65,7 +103,7 @@ def test_merge_survives_base_dir_change():
     # test for todo.md issue 7 / ADR 0001.
     out_a, state_a = installer.merge_hooks({}, "/base/ccn-old", _empty_state())
     out_b, state_b = installer.merge_hooks(out_a, "/base/ccn-new", state_a)
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         entries = out_b["hooks"][event]
         assert len(entries) == 1
         assert "/base/ccn-new/" in entries[0]["hooks"][0]["command"]

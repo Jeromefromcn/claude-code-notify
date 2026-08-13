@@ -42,7 +42,7 @@ def test_install_places_files_and_merges(tmp_path):
     assert (base / "hooks" / "stop.sh").exists()
     assert stat.S_IMODE(os.stat(base / "config.env").st_mode) == 0o600
     data = json.loads(settings.read_text())
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
 
 
@@ -82,7 +82,7 @@ def test_reinstall_after_home_change_replaces_hooks(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(settings.read_text())
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         entries = data["hooks"][event]
         assert len(entries) == 1
         assert str(new_base) in entries[0]["hooks"][0]["command"]
@@ -180,7 +180,7 @@ def test_install_downloads_and_extracts_tarball(tmp_path):
     assert (base / "claude_code_notify" / "hooks.py").exists()
     assert (base / "hooks" / "stop.sh").exists()
     data = json.loads(settings.read_text())
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         assert any(str(base) in e["hooks"][0]["command"] for e in data["hooks"][event])
 
 
@@ -311,7 +311,7 @@ def test_install_migrates_legacy_entries_without_state_file(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(settings.read_text())
-    for event in ("Stop", "StopFailure", "PermissionRequest", "SessionEnd"):
+    for event in ("Stop", "StopFailure", "PermissionRequest"):
         assert len(data["hooks"][event]) == 1  # adopted, not duplicated
     state_file = settings.parent / ".claude-code-notify-hooks.json"
     assert state_file.exists()  # migration produced a state file going forward

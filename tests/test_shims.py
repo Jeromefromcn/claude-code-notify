@@ -42,7 +42,7 @@ def test_stop_shim_forwards_stdin(tmp_path):
 
 
 def test_all_hook_shims_exist_and_executable():
-    for name in ("stop.sh", "stop_failure.sh", "permission_request.sh", "session_end.sh"):
+    for name in ("stop.sh", "stop_failure.sh", "permission_request.sh"):
         path = os.path.join(REPO, "hooks", name)
         assert os.path.exists(path)
         assert os.access(path, os.X_OK)
@@ -54,7 +54,6 @@ def test_all_hook_shims_exist_and_executable():
         ("stop.sh", "stop"),
         ("stop_failure.sh", "stop_failure"),
         ("permission_request.sh", "permission_request"),
-        ("session_end.sh", "session_end"),
     ],
 )
 def test_shim_forwards_event_to_correct_handler(tmp_path, script, event):
@@ -72,10 +71,9 @@ def test_shim_forwards_event_to_correct_handler(tmp_path, script, event):
     # observing that line via NOTIFY_DEBUG proves the shim threaded the
     # right event name to hooks.py, independent of network availability.
     #
-    # The transcript carries a launch + its completion: only then does the
-    # Stop handler attempt a send at all (a plain turn sends nothing since
-    # "finished" moved to SessionEnd), so the notifier error fires for every
-    # event under test.
+    # The transcript carries a launch + its completion so Stop has
+    # something to compute either way; every event under test attempts a
+    # send unconditionally once past its own gating (pending==0 for Stop).
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.env").write_text(

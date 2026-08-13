@@ -171,23 +171,6 @@ def _maybe_handle_usage_limit(payload, config, retry_delays=()):
     return True
 
 
-def _send_finished(config, kind, res, session_id, transcript, cwd, now, state_path, marker):
-    """Build and send a 'finished' or 'waiting' message; record marker + dedup flag.
-
-    Shared by the Stop path (a background task completed, or a plain turn
-    ended with the user's next prompt pending) and the SessionEnd path (the
-    session is over). The caller has already decided the send is warranted;
-    this only does the actual send and its bookkeeping.
-    """
-    title = latest_ai_title(transcript)
-    duration = _turn_duration(transcript, now)
-    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
-    notifier.send(dest, notifier.build_message(kind, cwd, _when(), title, duration))
-    ratelimit.record_sent(marker, now)
-    pending_tracker.mark_finished_sent(state_path)
-    _debug(config, f"{session_id} notified kind={kind} chat={res.chat_id}")
-
-
 def handle_stop(payload, config):
     if _maybe_handle_usage_limit(payload, config):
         return
@@ -200,7 +183,6 @@ def handle_stop(payload, config):
         return
     now = _now()
     stale_ids = []
-    resolved_now = []
     state_path = str(cfg.state_path(config.base_dir, session_id))
     pending = pending_tracker.compute_pending(
         transcript,
@@ -208,59 +190,23 @@ def handle_stop(payload, config):
         stale_seconds=config.pending_stale_seconds,
         now=now,
         on_stale=stale_ids.extend,
-        on_resolved=resolved_now.extend,
     )
     if stale_ids:
         _debug(config, f"stop session={session_id} expired {len(stale_ids)} stale "
                         f"launch(es) (older than {config.pending_stale_seconds}s): {sorted(stale_ids)}")
     _debug(config, f"stop session={session_id} pending={pending}")
-    # Any Stop with nothing left pending hands control back to the user —
-    # that always deserves a ping, whether a background launch just resolved
-    # ("finished") or the turn simply ended with the user's next prompt
-    # pending ("waiting"). Only an in-flight background task (pending > 0)
-    # stays silent. Repeat pings across closely-spaced turns are collapsed by
-    # the rate limit below, not by suppressing the notification outright.
     if pending > 0:
         return
     marker = str(cfg.marker_path(config.base_dir, session_id))
     if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
         _debug(config, f"stop session={session_id} suppressed by rate-limit")
         return
-    kind = "finished" if resolved_now else "waiting"
-    _send_finished(config, kind, res, f"stop session={session_id}", transcript, cwd, now, state_path, marker)
-
-
-def handle_session_end(payload, config):
-    session_id = payload.get("session_id", "")
-    transcript = payload.get("transcript_path", "")
-    cwd = payload.get("cwd", "")
-    res = routing.resolve(cwd, config.routes, config.bot_token, config.chat_id)
-    if res.muted:
-        _debug(config, f"session_end cwd={cwd} muted — no send")
-        return
-    now = _now()
-    state_path = str(cfg.state_path(config.base_dir, session_id))
-    pending = pending_tracker.compute_pending(
-        transcript,
-        state_path,
-        stale_seconds=config.pending_stale_seconds,
-        now=now,
-    )
-    _debug(config, f"session_end session={session_id} pending={pending}")
-    if pending > 0:
-        _debug(config, f"session_end session={session_id} ending with background work "
-                        f"still pending — no 'finished'")
-        return
-    if pending_tracker.finished_sent(state_path):
-        # Stop already announced the last background task's completion; the
-        # session continuing afterward (or closing) must not re-ping.
-        _debug(config, f"session_end session={session_id} 'finished' already sent — skip")
-        return
-    marker = str(cfg.marker_path(config.base_dir, session_id))
-    if not ratelimit.should_send(marker, config.ratelimit_seconds, now):
-        _debug(config, f"session_end session={session_id} suppressed by rate-limit")
-        return
-    _send_finished(config, "finished", res, f"session_end session={session_id}", transcript, cwd, now, state_path, marker)
+    title = latest_ai_title(transcript)
+    duration = _turn_duration(transcript, now)
+    dest = dataclasses.replace(config, bot_token=res.bot_token, chat_id=res.chat_id)
+    notifier.send(dest, notifier.build_message("finished", cwd, _when(), title, duration))
+    ratelimit.record_sent(marker, now)
+    _debug(config, f"stop session={session_id} notified chat={res.chat_id}")
 
 
 def handle_stop_failure(payload, config):
@@ -306,7 +252,6 @@ _HANDLERS = {
     "stop": handle_stop,
     "stop_failure": handle_stop_failure,
     "permission_request": handle_permission_request,
-    "session_end": handle_session_end,
 }
 
 

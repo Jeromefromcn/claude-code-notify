@@ -84,6 +84,12 @@ else
 fi
 chmod +x "$BASE_DIR"/hooks/*.sh
 
+# Orphaned shims from a previous version that `cp -R` won't remove on its own
+# (it only adds/overwrites what's in the new package, never deletes what's no
+# longer there). session_end.sh was decommissioned; installer.py's merge
+# strips the matching settings.json entry, this clears the leftover file.
+rm -f "$BASE_DIR/hooks/session_end.sh"
+
 # Config: keep existing (upgrade) or create (first install).
 CONFIG="$BASE_DIR/config.env"
 if [ -f "$CONFIG" ]; then

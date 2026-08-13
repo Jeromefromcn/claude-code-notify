@@ -12,7 +12,6 @@ class State:
     offset: int = 0
     launched: dict = field(default_factory=dict)  # tool_use_id -> ISO8601 launch timestamp, or None
     resolved: set = field(default_factory=set)
-    finished_sent: bool = False  # a Stop "finished"/"waiting" ping already covered this idle point
 
 
 def load_state(path):
@@ -32,7 +31,6 @@ def load_state(path):
             int(data.get("offset", 0)),
             dict(launched),
             set(data.get("resolved", [])),
-            bool(data.get("finished_sent", False)),
         )
     except Exception:
         # Best-effort loader: any missing/corrupt/wrong-shaped state file
@@ -48,7 +46,6 @@ def save_state(path, state):
         "offset": state.offset,
         "launched": dict(sorted(state.launched.items())),
         "resolved": sorted(state.resolved),
-        "finished_sent": state.finished_sent,
     }
     parent = os.path.dirname(path)
     if parent:
@@ -69,7 +66,7 @@ def _parse_iso(ts):
         return None
 
 
-def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, on_stale=None, on_resolved=None):
+def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, on_stale=None):
     state = load_state(state_path)
     try:
         size = os.path.getsize(transcript_path)
@@ -78,7 +75,6 @@ def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, o
     if size < state.offset:
         state = State()  # rotated/truncated → full rescan from offset 0
 
-    resolved_before = set(state.resolved)
     events, new_offset = parse_events(transcript_path, state.offset)
     for event in events:
         if isinstance(event, LaunchEvent):
@@ -86,20 +82,6 @@ def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, o
         elif isinstance(event, CompletionEvent):
             state.resolved.add(event.tool_use_id)
     state.offset = new_offset
-
-    # Report launches that were resolved by a <task-notification> in THIS pass
-    # (and not merely already-resolved before it). This is what lets the Stop
-    # handler distinguish "the last background task finished" from "a plain
-    # turn ended" — the former announces finished, the latter stays silent.
-    if on_resolved is not None:
-        resolved_now = [
-            event.tool_use_id for event in events
-            if isinstance(event, CompletionEvent)
-            and event.tool_use_id in state.launched
-            and event.tool_use_id not in resolved_before
-        ]
-        if resolved_now:
-            on_resolved(resolved_now)
 
     if stale_seconds is not None:
         cutoff = (now if now is not None else time.time()) - stale_seconds
@@ -115,13 +97,3 @@ def compute_pending(transcript_path, state_path, stale_seconds=None, now=None, o
 
     save_state(state_path, state)
     return len(state.launched.keys() - state.resolved)
-
-
-def finished_sent(state_path):
-    return load_state(state_path).finished_sent
-
-
-def mark_finished_sent(state_path):
-    state = load_state(state_path)
-    state.finished_sent = True
-    save_state(state_path, state)

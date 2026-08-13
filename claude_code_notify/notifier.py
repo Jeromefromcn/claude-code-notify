@@ -9,7 +9,6 @@ class NotifierError(Exception):
 
 _HEADS = {
     "finished": "Claude Code finished",
-    "waiting": "Claude Code is waiting for your input",
     "error": "Claude Code stopped with error",
     "needs-input": "Claude Code needs your input",
     "usage-limit": "Claude Code usage limit reached",

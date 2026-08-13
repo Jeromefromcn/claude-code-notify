@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-08-13
+
+### Changed
+- Reverted 0.6.0 and 0.7.0: `Stop` now sends "Claude Code finished" whenever
+  nothing is pending, unconditionally — the same notification cadence as
+  0.5.0 and earlier. There is no longer a "finished" vs "waiting for your
+  input" wording distinction. Across 0.5.0 through 0.7.1 the cadence never
+  actually changed (every `Stop` with `PENDING == 0` always notified); only
+  the wording and the machinery behind it did, and that machinery wasn't
+  earning its complexity. See
+  [docs/lessons-learned/0011](docs/lessons-learned/0011-revert-waiting-wording-and-session-end.md).
+- The installer now actively removes a hook entry it used to manage but no
+  longer does, instead of leaving it wired to a script that no longer ships.
+  Upgrading from 0.6.0-0.7.1 strips the stale `SessionEnd` entry from
+  `settings.json`; `install.sh` also deletes the now-orphaned
+  `hooks/session_end.sh` file, which a plain file copy never removes on its
+  own.
+
+### Removed
+- The `SessionEnd` hook (`hooks/session_end.sh`, `handle_session_end`) and
+  its `finished_sent` dedup flag in the per-session state file. No longer
+  needed: `Stop` alone already covers every case it existed to patch,
+  including one-shot `claude "…"` runs.
+
 ## [0.7.1] - 2026-08-12
 
 ### Fixed
